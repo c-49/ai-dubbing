@@ -14,7 +14,7 @@
   button:disabled { opacity: 0.5; cursor: default; }
   #remixStatus { font-size: 0.9rem; color: #9a9ca3; }
 
-  select, textarea { background: #1a1b1e; color: #e4e4e7; border: 1px solid #3a3c42; border-radius: 4px; }
+  select, textarea, input { background: #1a1b1e; color: #e4e4e7; border: 1px solid #3a3c42; border-radius: 4px; }
 
   .speakers { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
   .speaker-card { background: #232428; border: 1px solid #3a3c42; border-radius: 8px; padding: 0.75rem 1rem; min-width: 220px; }
@@ -27,12 +27,17 @@
   th, td { border-bottom: 1px solid #333539; padding: 0.5rem; text-align: left; vertical-align: top; font-size: 0.9rem; }
   th { background: #2a2c31; color: #e4e4e7; position: sticky; top: var(--table-sticky-top, 0px); z-index: 1; }
   tr.flagged { background: #3a331a; }
-  td.korean { color: #b5b7bd; max-width: 220px; }
-  td.english textarea { width: 100%; min-height: 2.4em; font-family: inherit; font-size: 0.9rem; box-sizing: border-box; }
+  tr.ignored { opacity: 0.5; }
+  tr.ignored td.target-text textarea { text-decoration: line-through; }
+  td.source-text { color: #b5b7bd; max-width: 220px; }
+  td.target-text textarea { width: 100%; min-height: 2.4em; font-family: inherit; font-size: 0.9rem; box-sizing: border-box; }
   td.time { white-space: nowrap; font-size: 0.8rem; }
   .time-btn { background: none; border: none; padding: 0; color: #7cb0e8; cursor: pointer;
               font-size: 0.8rem; text-decoration: underline; font-family: inherit; }
   .time-btn:hover { color: #a8cdf0; }
+  .time-edit { margin-top: 0.3rem; display: flex; align-items: center; gap: 0.2rem; }
+  .time-input { width: 5.4em; font-size: 0.78rem; padding: 0.1rem 0.25rem; font-family: ui-monospace, Consolas, monospace; }
+  .time-edit .saved-ok { margin-left: 0.3rem; }
 
   .sticky-video { position: sticky; top: 0; z-index: 5; background: #1a1b1e;
                   padding-top: 0.25rem; padding-bottom: 0.5rem; border-bottom: 1px solid #3a3c42; }
@@ -104,7 +109,7 @@
   <table>
     <thead>
       <tr>
-        <th>ID</th><th>Time</th><th>Korean</th><th>English</th><th>Speaker / Voice</th><th>Play</th><th>Flag</th>
+        <th>ID</th><th>Time</th><th id="sourceHeader">Source</th><th id="targetHeader">Target</th><th>Speaker / Voice</th><th>Play</th><th>Flag</th><th>Ignore</th>
       </tr>
     </thead>
     <tbody id="segmentRows"></tbody>
@@ -133,7 +138,10 @@ async function loadData() {
   DATA = await res.json();
   dataLoaded = true;
   document.getElementById('title').textContent = `Dub Review -- ${DATA.episode}`;
-  document.getElementById('subtitle').textContent = DATA.show ? `Show: ${DATA.show}` : '';
+  document.getElementById('subtitle').textContent = DATA.show
+    ? `Show: ${DATA.show} (${DATA.source_language_name} → ${DATA.target_language_name})` : '';
+  document.getElementById('sourceHeader').textContent = `Source (${DATA.source_language_name})`;
+  document.getElementById('targetHeader').textContent = `Target (${DATA.target_language_name})`;
   document.getElementById('editor').style.display = '';
   document.getElementById('sourceVideo').src = `/audio/${SHOW}/${EPISODE}/source.mp4`;
   document.getElementById('dubVideo').src = `/audio/${SHOW}/${EPISODE}/dubbed.mp4`;
@@ -164,6 +172,25 @@ function formatHMS(seconds) {
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
   return [h, m, s].map(n => String(n).padStart(2, '0')).join(':');
+}
+
+// Like formatHMS, but keeps sub-second precision -- needed when nudging a
+// segment by a fraction of a second, which whole-second hh:mm:ss can't express.
+function formatHMSPrecise(seconds) {
+  seconds = Math.max(0, seconds);
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${s.toFixed(2).padStart(5, '0')}`;
+}
+
+// Accepts "hh:mm:ss.ss", "mm:ss.ss", or plain seconds ("47.5") -- flexible so
+// a small nudge doesn't require retyping the full hh:mm:ss. Returns NaN for
+// unparseable input, which the caller's existing range check rejects.
+function parseHMS(str) {
+  const parts = str.trim().split(':');
+  if (parts.some(p => p.trim() === '' || isNaN(Number(p)))) return NaN;
+  return parts.reduce((acc, part) => acc * 60 + parseFloat(part), 0);
 }
 
 function seekAndPlay(seg) {
@@ -224,12 +251,18 @@ async function refreshStatus() {
   }
 }
 
+// Group keys (e.g. "us_female", "es_male") come from the server, scoped to
+// this show's own target language -- not a hardcoded list, since the set of
+// groups differs per language (Spanish has no UK-equivalent split, etc).
+function formatGroupLabel(key) {
+  return key.split('_').map(w => w.length <= 2 ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1)).join(' ');
+}
+
 function voiceOptionsHtml(selected) {
-  const groups = { us_female: 'US Female', us_male: 'US Male', uk_female: 'UK Female', uk_male: 'UK Male' };
   let html = '';
-  for (const [key, label] of Object.entries(groups)) {
-    html += `<optgroup label="${label}">`;
-    for (const v of DATA.voices[key]) {
+  for (const [key, voices] of Object.entries(DATA.voices)) {
+    html += `<optgroup label="${formatGroupLabel(key)}">`;
+    for (const v of voices) {
       html += `<option value="${v}" ${v === selected ? 'selected' : ''}>${v}</option>`;
     }
     html += `</optgroup>`;
@@ -285,13 +318,21 @@ function renderSegments() {
   for (const seg of DATA.segments) {
     if (onlyFlagged && !seg.needs_review) continue;
     const tr = document.createElement('tr');
-    tr.className = seg.needs_review ? 'flagged' : '';
+    tr.className = [seg.needs_review ? 'flagged' : '', seg.ignored ? 'ignored' : ''].filter(Boolean).join(' ');
     tr.innerHTML = `
       <td>${seg.id}</td>
-      <td class="time"><button class="time-btn" type="button">${formatHMS(seg.start)} - ${formatHMS(seg.end)}</button></td>
-      <td class="korean">${seg.korean}</td>
-      <td class="english">
-        <textarea data-id="${seg.id}">${seg.english ?? ''}</textarea>
+      <td class="time">
+        <button class="time-btn" type="button">${formatHMS(seg.start)} - ${formatHMS(seg.end)}</button>
+        <div class="time-edit">
+          <input type="text" class="time-input time-start" value="${formatHMSPrecise(seg.start)}" title="start (hh:mm:ss.ss, optional manual nudge)">
+          &ndash;
+          <input type="text" class="time-input time-end" value="${formatHMSPrecise(seg.end)}" title="end (hh:mm:ss.ss, optional manual nudge)">
+          <span class="saved-ok time-saved-ok" style="display:none">Saved</span>
+        </div>
+      </td>
+      <td class="source-text">${seg.source_text}</td>
+      <td class="target-text">
+        <textarea data-id="${seg.id}">${seg.target_text ?? ''}</textarea>
         <span class="saved-ok" style="display:none">Saved</span>
       </td>
       <td>
@@ -300,16 +341,46 @@ function renderSegments() {
       </td>
       <td>${seg.audio_path ? `<button class="play-btn" onclick="playClip('${seg.audio_path}')">Play</button>` : ''}</td>
       <td><input type="checkbox" class="flag-check" data-id="${seg.id}" ${seg.needs_review ? 'checked' : ''}></td>
+      <td><input type="checkbox" class="ignore-check" data-id="${seg.id}" ${seg.ignored ? 'checked' : ''}
+                 title="Exclude this line from the dub (keeps its text/timing -- useful if it looks like a transcription hallucination but you're not sure)"></td>
     `;
     tbody.appendChild(tr);
 
     tr.querySelector('.time-btn').addEventListener('click', () => seekAndPlay(seg));
 
+    const startInput = tr.querySelector('.time-start');
+    const endInput = tr.querySelector('.time-end');
+    const timeSavedLabel = tr.querySelector('.time-saved-ok');
+    const saveTime = async () => {
+      const newStart = parseHMS(startInput.value);
+      const newEnd = parseHMS(endInput.value);
+      if (!(newStart >= 0) || !(newEnd > newStart)) {
+        alert('Start must be 0 or greater and less than end (format: hh:mm:ss.ss, mm:ss.ss, or plain seconds).');
+        startInput.value = formatHMSPrecise(seg.start);
+        endInput.value = formatHMSPrecise(seg.end);
+        return;
+      }
+      // Tolerance, not exact equality -- round-tripping through the
+      // hh:mm:ss.ss display text truncates to 2 decimal places.
+      if (Math.abs(newStart - seg.start) < 0.005 && Math.abs(newEnd - seg.end) < 0.005) return;
+      startInput.disabled = true;
+      endInput.disabled = true;
+      const ok = await saveSegment(seg.id, { start: newStart, end: newEnd });
+      if (ok) {
+        timeSavedLabel.style.display = 'inline';
+        setTimeout(() => timeSavedLabel.style.display = 'none', 1500);
+      }
+      // renderSegments() (inside saveSegment) already rebuilt this row from
+      // fresh data either way, so no need to re-enable these specific inputs.
+    };
+    startInput.addEventListener('change', saveTime);
+    endInput.addEventListener('change', saveTime);
+
     const textarea = tr.querySelector('textarea');
     const savedLabel = tr.querySelector('.saved-ok');
     textarea.addEventListener('change', async () => {
       textarea.disabled = true;
-      await saveSegment(seg.id, { english: textarea.value });
+      await saveSegment(seg.id, { target_text: textarea.value });
       textarea.disabled = false;
       savedLabel.style.display = 'inline';
       setTimeout(() => savedLabel.style.display = 'none', 1500);
@@ -324,6 +395,12 @@ function renderSegments() {
     tr.querySelector('.flag-check').addEventListener('change', async (e) => {
       await saveSegment(seg.id, { needs_review: e.target.checked });
     });
+
+    tr.querySelector('.ignore-check').addEventListener('change', async (e) => {
+      e.target.disabled = true;
+      await saveSegment(seg.id, { ignored: e.target.checked });
+      e.target.disabled = false;
+    });
   }
 }
 
@@ -332,10 +409,18 @@ async function saveSegment(id, patch) {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
   });
-  const updated = await res.json();
-  const i = DATA.segments.findIndex(s => s.id === id);
-  if (i !== -1) DATA.segments[i] = updated;
+  const result = await res.json();
+  if (!res.ok) {
+    alert(result.error || 'Failed to save');
+    renderSegments();  // snap any edited inputs back to the last-saved values
+    return false;
+  }
+  for (const updated of result.segments) {
+    const i = DATA.segments.findIndex(s => s.id === updated.id);
+    if (i !== -1) DATA.segments[i] = updated;
+  }
   renderSegments();
+  return true;
 }
 
 document.getElementById('filterFlagged').addEventListener('change', renderSegments);

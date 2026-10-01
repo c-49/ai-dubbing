@@ -98,18 +98,44 @@ per-show setting instead of an assumption baked into the code.
 - **Done when:** translation quality is approved on test clips for each
   language pair actually in use.
 
-### M10: Spanish TTS
-- Confirm Kokoro's Spanish voice pack (`lang_code='e'`) works against the
-  existing espeak-ng install with no new system dependency.
-- Parameterize the three hardcoded `KPipeline(lang_code="a")` call sites
-  (`tts.py`, `timing.py`, and the review UI's own TTS pipeline) off
-  `target_language` via the config-driven mapping from M7.
-- Add Spanish voices to the review UI's voice picker, scoped so a
-  Spanish-target show only offers Spanish voices (not a mixed English+
-  Spanish list).
-- Update `config.yaml`'s `default_voice` to be per-target-language.
+### M10: Spanish TTS -- done
+- Confirmed Kokoro's Spanish voice pack (`lang_code='e'`, espeak-ng-backed
+  via `misaki.espeak`, unlike `'a'`'s bundled G2P) against the existing
+  espeak-ng install with no new system dependency -- added as a permanent
+  check in `check_setup.py`.
+- Confirmed the real Spanish voice IDs against Kokoro-82M's HF repo file
+  listing rather than guessing: only 3 exist today -- `ef_dora` (female),
+  `em_alex`, `em_santa` (male) -- vs. 20 for English.
+- Parameterized the hardcoded `KPipeline(lang_code="a")` call sites
+  (`tts.py`, `timing.py`, and the review UI's own TTS pipeline, which also
+  needed its single cached pipeline instance turned into one-per-language-
+  code) off `target_language` via `config.yaml`'s `languages.target.<code>`.
+- Added Spanish voice groups to the review UI's voice picker (`es_female`/
+  `es_male`), scoped per show's own target language -- a Spanish-target
+  show only ever sees Spanish voices.
+- Moved `default_voice` from a single flat `models.tts.default_voice` to
+  per-target-language (`languages.target.<code>.default_voice`).
+- **Key realization that unblocked this milestone:** Spanish is only ever
+  a *target* language in this project (dub output) -- there is no Spanish
+  *source* clip, and none is needed. M10 dubs an existing Korean/Japanese
+  test clip *into* Spanish, same as any other target language.
 - **Done when:** a Spanish dub of a test clip plays with correctly assigned
-  Spanish voices per speaker.
+  Spanish voices per speaker -- met by re-dubbing a copy of `vincenzo`'s
+  existing Korean test clip to Spanish (`ko -> es`) end-to-end: translate,
+  TTS (`ef_dora`/`em_alex`/`em_santa` per speaker), timing fit, and mix all
+  completed with 0 segments flagged, and `mix.py`'s metadata correctly read
+  "Spanish Dub"/"Original Korean".
+- **Finding carried over from M9's name-consistency issue (Japanese):** the
+  same problem hit Spanish on an empty glossary -- "빈센조 가사노" (Vincenzo
+  Cassano) came out as "Sensoz" uncorrected. Fixed the same way: added the
+  name to the show's glossary (`{"빈센조 가사노": {"es": "Vincenzo Cassano"}}`),
+  re-translated, confirmed it now reads correctly. Not a code gap -- a
+  reminder that a brand-new show's empty glossary is a real risk for any
+  target language, not just Japanese.
+- **New limitation found, not fixed:** this test clip has 4 speakers (2
+  female, 2 male) but only 1 Spanish female voice exists -- two different
+  female characters are forced to share `ef_dora`. Nothing to fix in code;
+  it's a real constraint of Kokoro's current Spanish voice pack.
 
 ### M11: UI language-awareness
 - Episode editor's table headers become dynamic ("Source (Japanese)" /
@@ -129,14 +155,19 @@ per-show setting instead of an assumption baked into the code.
   timing may differ per language.
 
 ## Open items to revisit during implementation
-- Exact Spanish Kokoro voice IDs (count and names) -- confirm against
-  Kokoro's Hugging Face model card rather than guessing.
-- Per-target-language `WORDS_PER_SECOND` value for Spanish -- needs
-  empirical tuning against real translated/TTS'd clips, not a one-time
-  guess.
-- Whether `qwen2.5:7b` is adequate for Japanese and Spanish, or whether a
-  larger/different Ollama model is needed for one or both pairs -- decide
-  after seeing real translation output in M9.
-- Japanese VAD tuning in `config.yaml` (`threshold`,
-  `min_silence_duration_ms`, etc.) may need different values than the
-  Korean-tuned defaults -- revisit during M8 once a real clip is tested.
+- Per-target-language `words_per_second` value for Spanish (currently
+  `2.8`, a placeholder) -- still needs empirical tuning against real
+  Spanish TTS/timing output, the way English's `2.3` was tuned in the
+  original Milestone 2. M10 validated the TTS *mechanics*, not this value.
+- Whether `qwen2.5:7b` is adequate for Japanese and Spanish long-term: on
+  the one Japanese and one Spanish test clip tried so far, translation was
+  fluent and the pipeline completed cleanly, but both hit the same
+  failure mode independently -- a character name garbled on an empty
+  glossary (fixed by hand each time, not by the model). Not yet known
+  whether that's the only failure mode or just the one small test clips
+  happened to surface.
+- Kokoro's Spanish voice pack has only 3 voices (1 female, 2 male) vs.
+  English's 20 -- a show with more than 2 same-gender speakers will have
+  to reuse a voice across different characters. No workaround planned;
+  just a constraint to keep in mind when picking target languages for a
+  many-speaker show.

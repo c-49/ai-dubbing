@@ -1,8 +1,20 @@
 {
-  "빈센조 가사노": "Vincenzo Cassano",
-  "빈센조": "Vincenzo",
-  "가사노": "Cassano",
-  "정혜리": "Jeong Hye-ri",
-  "홍유찬": "Hong Yoo-chan",
-  "지푸라기": "Jipuragi"
+  "빈센조 가사노": {
+    "en": "Vincenzo Cassano"
+  },
+  "빈센조": {
+    "en": "Vincenzo"
+  },
+  "가사노": {
+    "en": "Cassano"
+  },
+  "정혜리": {
+    "en": "Jeong Hye-ri"
+  },
+  "홍유찬": {
+    "en": "Hong Yoo-chan"
+  },
+  "지푸라기": {
+    "en": "Jipuragi"
+  }
 }

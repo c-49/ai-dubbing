@@ -48,23 +48,34 @@ IGNORED_SHOW_DIRS = {"_setup_check"}
 # under both shows/ and work/).
 SHOW_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 
+# Keyed by target_language, then voice group -- so a show's voice picker only
+# ever offers voices for its own target language (see get_data()). Spanish
+# only has 3 voices total (vs. English's 20), confirmed against Kokoro-82M's
+# HF repo file listing, not guessed -- see LANGUAGE_PLAN.md M10.
 VOICES = {
-    "us_female": ["af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica",
-                  "af_kore", "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky"],
-    "us_male": ["am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam",
-                "am_michael", "am_onyx", "am_puck", "am_santa"],
-    "uk_female": ["bf_alice", "bf_emma", "bf_isabella", "bf_lily"],
-    "uk_male": ["bm_daniel", "bm_fable", "bm_george", "bm_lewis"],
+    "en": {
+        "us_female": ["af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica",
+                      "af_kore", "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky"],
+        "us_male": ["am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam",
+                    "am_michael", "am_onyx", "am_puck", "am_santa"],
+        "uk_female": ["bf_alice", "bf_emma", "bf_isabella", "bf_lily"],
+        "uk_male": ["bm_daniel", "bm_fable", "bm_george", "bm_lewis"],
+    },
+    "es": {
+        "es_female": ["ef_dora"],
+        "es_male": ["em_alex", "em_santa"],
+    },
 }
 
 app = Flask(__name__)
-_tts_pipeline = None
+_tts_pipelines: dict[str, "KPipeline"] = {}  # keyed by Kokoro lang_code ("a", "e", ...)
 
 # Single background worker: only one episode's pipeline runs at a time (also
 # enforced across processes by run_episode.py's work/.pipeline.lock, so a
 # manually-run ingest.py won't collide with this either).
 _work_queue: "queue.Queue[tuple[str, str]]" = queue.Queue()
 _queued_keys: set[tuple[str, str]] = set()
+_cancelled_keys: set[tuple[str, str]] = set()
 _queue_lock = threading.Lock()
 
 
@@ -74,6 +85,7 @@ def enqueue_episode(show: str, episode: str) -> bool:
         if key in _queued_keys:
             return False
         _queued_keys.add(key)
+        _cancelled_keys.discard(key)
 
     episode_dir = WORK_DIR / show / episode
     status = load_json(episode_dir / "status.json") or {}
@@ -84,11 +96,31 @@ def enqueue_episode(show: str, episode: str) -> bool:
     return True
 
 
+def cancel_queued_episode(show: str, episode: str) -> bool:
+    """Lets a still-waiting-in-line episode be deleted/replaced without
+    waiting for its turn. Can't un-queue from queue.Queue directly, so the
+    worker just skips it when its turn comes (see _worker_loop)."""
+    key = (show, episode)
+    with _queue_lock:
+        if key not in _queued_keys:
+            return False
+        _queued_keys.discard(key)
+        _cancelled_keys.add(key)
+    return True
+
+
 def _worker_loop() -> None:
     while True:
-        show, episode = _work_queue.get()
+        key = _work_queue.get()
+        show, episode = key
         with _queue_lock:
-            _queued_keys.discard((show, episode))
+            _queued_keys.discard(key)
+            cancelled = key in _cancelled_keys
+            _cancelled_keys.discard(key)
+        if cancelled:
+            print(f"[worker] skipping cancelled {show}/{episode}", flush=True)
+            _work_queue.task_done()
+            continue
         episode_dir = WORK_DIR / show / episode
         print(f"[worker] starting {show}/{episode}", flush=True)
         try:
@@ -116,11 +148,10 @@ def _reconcile_stale_statuses() -> None:
                 save_json(status_path, status)
 
 
-def get_tts_pipeline() -> KPipeline:
-    global _tts_pipeline
-    if _tts_pipeline is None:
-        _tts_pipeline = KPipeline(lang_code="a")
-    return _tts_pipeline
+def get_tts_pipeline(kokoro_lang_code: str = "a") -> KPipeline:
+    if kokoro_lang_code not in _tts_pipelines:
+        _tts_pipelines[kokoro_lang_code] = KPipeline(lang_code=kokoro_lang_code)
+    return _tts_pipelines[kokoro_lang_code]
 
 
 def load_json(path: Path):
@@ -188,50 +219,112 @@ def get_voices_path(show: str) -> Path:
     return SHOWS_DIR / show / "voices.json"
 
 
-def synthesize_clip(episode_dir: Path, seg: dict) -> None:
-    pipeline = get_tts_pipeline()
-    chunks = [audio for _, _, audio in pipeline(seg["english"], voice=seg["voice"])]
+def get_language_config() -> dict:
+    return yaml.safe_load(CONFIG_PATH.read_text())["languages"]
+
+
+def get_show_config(show: str) -> dict | None:
+    return load_json(SHOWS_DIR / show / "config.json")
+
+
+def get_show_language_info(show: str) -> dict:
+    """Resolves a show's source/target language codes (defaulting to ko/en
+    for shows predating config.json) plus their display names and the
+    target language's Kokoro settings, for the UI's language badges/headers,
+    TTS synthesis, and passing into mix.py."""
+    show_config = get_show_config(show) or {}
+    source_language = show_config.get("source_language", "ko")
+    target_language = show_config.get("target_language", "en")
+    languages = get_language_config()
+    target_cfg = languages["target"][target_language]
+    return {
+        "source_language": source_language,
+        "target_language": target_language,
+        "source_language_name": languages["source"][source_language]["name"],
+        "target_language_name": target_cfg["name"],
+        "kokoro_lang_code": target_cfg["kokoro_lang_code"],
+        "default_voice": target_cfg["default_voice"],
+        "words_per_second": target_cfg["words_per_second"],
+    }
+
+
+def synthesize_clip(episode_dir: Path, seg: dict, kokoro_lang_code: str = "a") -> None:
+    pipeline = get_tts_pipeline(kokoro_lang_code)
+    chunks = [audio for _, _, audio in pipeline(seg["target_text"], voice=seg["voice"])]
     audio = np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
     out_path = episode_dir / seg["audio_path"]
     sf.write(out_path, audio, TTS_SAMPLE_RATE)
 
 
-def refit_segment(episode_dir: Path, segments: list[dict], idx: int) -> None:
+def refit_segment(show: str, episode_dir: Path, segments: list[dict], idx: int) -> None:
     config = yaml.safe_load(CONFIG_PATH.read_text())
     ollama_cfg = config["models"]["ollama"]
+
+    lang_info = get_show_language_info(show)
+
     fit_segment(
         episode_dir, segments, idx, config["timing"]["max_speedup"],
-        ollama_cfg["model"], ollama_cfg["host"], get_tts_pipeline(),
+        ollama_cfg["model"], ollama_cfg["host"], get_tts_pipeline(lang_info["kokoro_lang_code"]),
+        lang_info["source_language_name"], lang_info["target_language_name"], lang_info["words_per_second"],
+        # Never auto-rewrite text behind the reviewer's back -- every call
+        # here follows an interactive edit (text, voice, or timestamp), so a
+        # human has either just chosen this wording on purpose or is relying
+        # on it staying put. If it still doesn't fit, flag it and leave it
+        # for them to resolve (e.g. nudge the timestamp, or accept the
+        # overlap) rather than silently rewriting it again.
+        allow_auto_shorten=False,
     )
 
 
 @app.get("/")
 def home():
-    shows = [{"name": name, "episode_count": len(list_episodes(name))} for name in list_shows()]
-    return render_template("home.html", shows=shows)
+    shows = [
+        {"name": name, "episode_count": len(list_episodes(name)), **get_show_language_info(name)}
+        for name in list_shows()
+    ]
+    return render_template("home.html", shows=shows, languages=get_language_config())
+
+
+@app.get("/api/languages")
+def list_languages():
+    return jsonify(get_language_config())
 
 
 @app.post("/api/shows")
 def create_show():
-    name = (request.get_json(silent=True) or {}).get("name", "").strip()
+    body = request.get_json(silent=True) or {}
+    name = body.get("name", "").strip()
+    source_language = body.get("source_language", "").strip()
+    target_language = body.get("target_language", "").strip()
+
     if not SHOW_NAME_RE.match(name):
         return jsonify({"error": "show name must start with a letter/number and contain only "
                                   "letters, numbers, '-' or '_'"}), 400
     if name in list_shows():
         return jsonify({"error": f"show '{name}' already exists"}), 400
 
+    languages = get_language_config()
+    if source_language not in languages["source"]:
+        return jsonify({"error": f"source language must be one of {sorted(languages['source'])}"}), 400
+    if target_language not in languages["target"]:
+        return jsonify({"error": f"target language must be one of {sorted(languages['target'])}"}), 400
+
     show_dir = SHOWS_DIR / name
     show_dir.mkdir(parents=True)
     save_json(show_dir / "glossary.json", {})
+    save_json(show_dir / "config.json", {
+        "source_language": source_language,
+        "target_language": target_language,
+    })
 
-    return jsonify({"name": name})
+    return jsonify({"name": name, "source_language": source_language, "target_language": target_language})
 
 
 @app.get("/show/<show>")
 def show_page(show):
     if show not in list_shows():
         abort(404, description=f"no show '{show}'")
-    return render_template("show.html", show=show)
+    return render_template("show.html", show=show, **get_show_language_info(show))
 
 
 @app.get("/api/<show>/episodes")
@@ -271,8 +364,10 @@ def upload_episode(show):
             return jsonify({"error": f"episode '{episode}' already exists for this show",
                              "exists": True}), 409
         existing_status = get_episode_status(episode_dir)["status"]
-        if existing_status in ("queued", "running"):
-            return jsonify({"error": f"cannot replace -- episode is currently {existing_status}"}), 400
+        if existing_status == "running":
+            return jsonify({"error": "cannot replace -- episode is currently running"}), 400
+        if existing_status == "queued":
+            cancel_queued_episode(show, episode)  # still waiting in line -- safe to pull out
         shutil.rmtree(episode_dir)  # discard all prior stage output, not just source.mp4
 
     episode_dir.mkdir(parents=True, exist_ok=True)
@@ -297,8 +392,10 @@ def upload_episode(show):
 def delete_episode(show, episode):
     episode_dir = get_episode_dir(show, episode)
     status = get_episode_status(episode_dir)["status"]
-    if status in ("queued", "running"):
-        return jsonify({"error": f"cannot delete -- episode is currently {status}"}), 400
+    if status == "running":
+        return jsonify({"error": "cannot delete -- episode is currently running"}), 400
+    if status == "queued":
+        cancel_queued_episode(show, episode)  # still waiting in line -- safe to pull out
     shutil.rmtree(episode_dir)
     return jsonify({"ok": True})
 
@@ -352,12 +449,16 @@ def get_data(show, episode):
     episode_dir = get_episode_dir(show, episode)
     segments = load_json(episode_dir / "segments.json") or []
     speakers = load_json(episode_dir / "speakers.json") or {}
+    lang_info = get_show_language_info(show)
     return jsonify({
         "episode": episode,
         "show": show,
         "segments": segments,
         "speakers": speakers,
-        "voices": VOICES,
+        # Scoped to this show's own target language -- a Spanish-target show
+        # should only ever be offered Spanish voices, not a mixed list.
+        "voices": VOICES[lang_info["target_language"]],
+        **lang_info,
     })
 
 
@@ -372,8 +473,8 @@ def update_segment(show, episode, seg_id):
     seg = segments[idx]
 
     regenerate = False
-    if "english" in data and data["english"] != seg["english"]:
-        seg["english"] = data["english"]
+    if "target_text" in data and data["target_text"] != seg["target_text"]:
+        seg["target_text"] = data["target_text"]
         regenerate = True
     if "voice" in data and data["voice"] != seg["voice"]:
         seg["voice"] = data["voice"]
@@ -381,12 +482,52 @@ def update_segment(show, episode, seg_id):
     if "needs_review" in data:
         seg["needs_review"] = bool(data["needs_review"])
 
-    if regenerate:
-        synthesize_clip(episode_dir, seg)
-        refit_segment(episode_dir, segments, idx)
+    lang_info = get_show_language_info(show)
+    kokoro_lang_code = lang_info["kokoro_lang_code"]
+
+    if "ignored" in data:
+        new_ignored = bool(data["ignored"])
+        if new_ignored != bool(seg.get("ignored", False)):
+            seg["ignored"] = new_ignored
+            # Un-ignoring a line that was flagged before TTS ever ran on it
+            # (so it never got a clip) needs one now, or it'd silently stay
+            # mute -- give it the conventional path and a voice so the usual
+            # synthesize+refit below picks it up. A line that already has a
+            # clip (ignored after the fact) just needs no further action:
+            # mix.py already skips "ignored" clips regardless of audio_path.
+            if not new_ignored and not seg.get("audio_path") and seg.get("target_text"):
+                seg["audio_path"] = f"tts/{seg['id']:04d}.wav"
+                seg["voice"] = seg.get("voice") or lang_info["default_voice"]
+                regenerate = True
+
+    retimed = False
+    if "start" in data or "end" in data:
+        new_start = float(data.get("start", seg["start"]))
+        new_end = float(data.get("end", seg["end"]))
+        if new_start < 0 or new_end <= new_start:
+            return jsonify({"error": "start must be 0 or greater and less than end"}), 400
+        if (new_start, new_end) != (seg["start"], seg["end"]):
+            seg["start"], seg["end"] = new_start, new_end
+            retimed = True
+
+    affected = [seg]
+    if (regenerate or retimed) and seg.get("audio_path") and not seg.get("ignored"):
+        synthesize_clip(episode_dir, seg, kokoro_lang_code)
+        refit_segment(show, episode_dir, segments, idx)
+
+    # Moving this segment's start also changes the previous segment's
+    # available slot (its dub clip must fit before THIS segment's new
+    # start) -- refit it too, from a freshly-synthesized (not-yet-sped-up)
+    # copy of its clip, since atempo isn't idempotent (fit_segment's own
+    # docstring: mutates the clip on disk at most once per call).
+    if retimed and idx > 0 and segments[idx - 1].get("audio_path") and not segments[idx - 1].get("ignored"):
+        prev = segments[idx - 1]
+        synthesize_clip(episode_dir, prev, kokoro_lang_code)
+        refit_segment(show, episode_dir, segments, idx - 1)
+        affected.append(prev)
 
     save_json(episode_dir / "segments.json", segments)
-    return jsonify(segments[idx])
+    return jsonify({"segments": affected})
 
 
 @app.post("/api/<show>/<episode>/speaker/<speaker>/voice")
@@ -405,12 +546,15 @@ def update_speaker_voice(show, episode, speaker):
     voices_path.parent.mkdir(parents=True, exist_ok=True)
     save_json(voices_path, voices)
 
+    kokoro_lang_code = get_show_language_info(show)["kokoro_lang_code"]
+
     segments = load_json(episode_dir / "segments.json")
     for idx, seg in enumerate(segments):
-        if seg.get("speaker") == speaker and seg.get("english"):
-            seg["voice"] = voice
-            synthesize_clip(episode_dir, seg)
-            refit_segment(episode_dir, segments, idx)
+        if seg.get("speaker") == speaker and seg.get("target_text"):
+            seg["voice"] = voice  # recorded either way, so it's already right if un-ignored later
+            if not seg.get("ignored"):
+                synthesize_clip(episode_dir, seg, kokoro_lang_code)
+                refit_segment(show, episode_dir, segments, idx)
     save_json(episode_dir / "segments.json", segments)
 
     return jsonify({"speaker": speaker, "voice": voice, "segments": segments})
@@ -419,7 +563,8 @@ def update_speaker_voice(show, episode, speaker):
 @app.post("/api/<show>/<episode>/remix")
 def remix(show, episode):
     episode_dir = get_episode_dir(show, episode)
-    out_path = run_mix(episode_dir)
+    lang_info = get_show_language_info(show)
+    out_path = run_mix(episode_dir, lang_info["source_language"], lang_info["target_language"])
     return jsonify({"ok": True, "path": str(out_path)})
 
 

@@ -40,7 +40,10 @@ def build_dub_track(
     track = np.zeros((total_samples, 2), dtype="float32")
     spans = []
     for seg in segments:
-        if not seg.get("audio_path"):
+        # "ignored" segments may still have a clip on disk from before they
+        # were marked ignored (kept around in case that was a misjudgment) --
+        # never place it, same as if no clip existed at all.
+        if not seg.get("audio_path") or seg.get("ignored"):
             continue
         clip, sr = sf.read(episode_dir / seg["audio_path"], dtype="float32", always_2d=True)
         if clip.shape[1] == 1:
@@ -97,9 +100,13 @@ def normalize_loudness(in_path: Path, out_path: Path, sample_rate: int, target_l
     )
 
 
-def mix(episode_dir: Path) -> Path:
+def mix(episode_dir: Path, source_language: str = "ko", target_language: str = "en") -> Path:
     segments = json.loads((episode_dir / "segments.json").read_text(encoding="utf-8"))
-    levels = yaml.safe_load(CONFIG_PATH.read_text())["mix_levels"]
+    full_config = yaml.safe_load(CONFIG_PATH.read_text())
+    levels = full_config["mix_levels"]
+    languages = full_config["languages"]
+    source_name = languages["source"][source_language]["name"]
+    target_name = languages["target"][target_language]["name"]
 
     no_vocals = load_stereo(episode_dir / "no_vocals.wav", MIX_SAMPLE_RATE)
     vocals = load_stereo(episode_dir / "vocals.wav", MIX_SAMPLE_RATE)
@@ -137,8 +144,8 @@ def mix(episode_dir: Path) -> Path:
             "-map", "0:v:0", "-map", "1:a:0", "-map", "2:a:0",
             "-c:v", "copy",
             "-c:a", "aac", "-b:a", "192k",
-            "-metadata:s:a:0", "title=English Dub",
-            "-metadata:s:a:1", "title=Original Korean",
+            "-metadata:s:a:0", f"title={target_name} Dub",
+            "-metadata:s:a:1", f"title=Original {source_name}",
             "-disposition:a:0", "default",
             "-disposition:a:1", "0",
             str(out_path),
@@ -150,5 +157,7 @@ def mix(episode_dir: Path) -> Path:
 
 if __name__ == "__main__":
     episode_dir = Path(sys.argv[1])
-    out = mix(episode_dir)
+    source_language = sys.argv[2] if len(sys.argv) > 2 else "ko"
+    target_language = sys.argv[3] if len(sys.argv) > 3 else "en"
+    out = mix(episode_dir, source_language, target_language)
     print(f"wrote {out}")

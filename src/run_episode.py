@@ -6,8 +6,10 @@ Safe to re-run after a crash or Ctrl+C -- each stage figures out on its own
 what (if anything) is already done and picks up from there (see the module
 docstrings in extract.py/separate.py/transcribe.py/etc. for how each one
 decides what's left to do). The show name is the episode's parent folder,
-e.g. work/vincenzo/ep5 -> show "vincenzo" -> shows/vincenzo/glossary.json
-and voices.json are used automatically if present.
+e.g. work/vincenzo/ep5 -> show "vincenzo" -> shows/vincenzo/glossary.json,
+voices.json, and config.json (source_language/target_language) are used
+automatically if present; source_language defaults to "ko" if config.json
+is missing.
 
 Also maintains, for the review web app's benefit:
 - <episode_dir>/status.json -- status (running/done/failed), which stage is
@@ -105,6 +107,7 @@ def run(episode_dir: Path) -> None:
 
     glossary_path = SHOWS_DIR / show / "glossary.json"
     voices_path = SHOWS_DIR / show / "voices.json"
+    config_path = SHOWS_DIR / show / "config.json"
     glossary_path = glossary_path if glossary_path.exists() else None
     voices_path = voices_path if voices_path.exists() else None
 
@@ -112,15 +115,19 @@ def run(episode_dir: Path) -> None:
     if glossary_path:
         glossary_terms = list(json.loads(glossary_path.read_text(encoding="utf-8")).keys())
 
+    show_config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
+    source_language = show_config.get("source_language", "ko")
+    target_language = show_config.get("target_language", "en")
+
     stages = [
         ("extract audio", extract.extract_audio, (episode_dir,)),
         ("separate vocals (Demucs)", separate.separate, (episode_dir,)),
-        ("transcribe (faster-whisper)", transcribe.transcribe, (episode_dir, glossary_terms)),
+        ("transcribe (faster-whisper)", transcribe.transcribe, (episode_dir, glossary_terms, source_language)),
         ("diarize (pyannote)", diarize.diarize, (episode_dir,)),
-        ("translate (Ollama)", translate.translate, (episode_dir, glossary_path)),
-        ("TTS (Kokoro)", tts.synthesize, (episode_dir, voices_path)),
-        ("timing fit", timing.fit_timing, (episode_dir,)),
-        ("mix + export", mix.mix, (episode_dir,)),
+        ("translate (Ollama)", translate.translate, (episode_dir, glossary_path, source_language, target_language)),
+        ("TTS (Kokoro)", tts.synthesize, (episode_dir, voices_path, target_language)),
+        ("timing fit", timing.fit_timing, (episode_dir, source_language, target_language)),
+        ("mix + export", mix.mix, (episode_dir, source_language, target_language)),
     ]
 
     logger = EpisodeLogger(episode_dir)

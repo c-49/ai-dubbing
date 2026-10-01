@@ -36,6 +36,22 @@ def check_kokoro():
     return audio_path.exists(), str(audio_path)
 
 
+def check_kokoro_spanish():
+    # 'e' is espeak-ng-backed (misaki.espeak), unlike 'a' which bundles its
+    # own G2P -- this specifically confirms Spanish works against the
+    # already-installed espeak-ng with no new system dependency. See
+    # LANGUAGE_PLAN.md M10.
+    from kokoro import KPipeline
+    import soundfile as sf
+
+    pipeline = KPipeline(lang_code="e")
+    audio_path = WORK_DIR / "kokoro_test_es.wav"
+    for _, _, audio in pipeline("Prueba de configuracion, uno dos tres.", voice="ef_dora"):
+        sf.write(audio_path, audio, 24000)
+        break
+    return audio_path.exists(), str(audio_path)
+
+
 def check_whisper(sample_path: Path):
     from faster_whisper import WhisperModel
 
@@ -96,6 +112,12 @@ def main():
     except Exception as e:
         report("kokoro", False, repr(e))
         kokoro_output = None
+
+    try:
+        ok, detail = check_kokoro_spanish()
+        report("kokoro (spanish)", ok, detail)
+    except Exception as e:
+        report("kokoro (spanish)", False, repr(e))
 
     if kokoro_output and kokoro_output.exists():
         try:

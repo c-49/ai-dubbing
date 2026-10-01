@@ -1,8 +1,11 @@
-"""Stage 3: transcribe Korean speech with faster-whisper.
+"""Stage 3: transcribe speech with faster-whisper.
 
-Usage: python src/transcribe.py work/vincenzo/test_clip
+Usage: python src/transcribe.py work/vincenzo/test_clip [source_language]
 Reads:  <episode_dir>/vocals.wav
 Writes: <episode_dir>/segments.json
+
+source_language is a code from config.yaml's languages.source allowlist
+(e.g. "ko", "ja"); defaults to "ko" when omitted, e.g. for ad-hoc CLI runs.
 
 This is likely the single longest stage on a full episode (hours on CPU),
 so it supports resuming after a crash: progress is saved every 20 segments,
@@ -24,7 +27,9 @@ import pathfix  # noqa: F401
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
 
 
-def transcribe(episode_dir: Path, glossary_terms: list[str] | None = None) -> list[dict]:
+def transcribe(
+    episode_dir: Path, glossary_terms: list[str] | None = None, source_language: str = "ko",
+) -> list[dict]:
     vocals_in = episode_dir / "vocals.wav"
     if not vocals_in.exists():
         raise FileNotFoundError(f"no vocals at {vocals_in}, run separate.py first")
@@ -45,15 +50,23 @@ def transcribe(episode_dir: Path, glossary_terms: list[str] | None = None) -> li
         trimmed_path = episode_dir / "_resume_vocals.wav"
         sf.write(trimmed_path, audio[round(resume_from * sr):], sr)
 
-    config = yaml.safe_load(CONFIG_PATH.read_text())["models"]["whisper"]
+    full_config = yaml.safe_load(CONFIG_PATH.read_text())
+    config = full_config["models"]["whisper"]
     model = WhisperModel(config["size"], device=config["device"], compute_type=config["compute_type"])
+
+    source_languages = full_config["languages"]["source"]
+    if source_language not in source_languages:
+        raise ValueError(f"unknown source_language {source_language!r}, expected one of {sorted(source_languages)}")
+    language_cfg = source_languages[source_language]
+    whisper_code = language_cfg["whisper_code"]
+    vad_params = {**config["vad"], **language_cfg.get("vad_overrides", {})}
 
     initial_prompt = ", ".join(glossary_terms) if glossary_terms else None
     segments, info = model.transcribe(
         str(trimmed_path or vocals_in),
-        language="ko",
+        language=whisper_code,
         vad_filter=True,
-        vad_parameters=config["vad"],
+        vad_parameters=vad_params,
         condition_on_previous_text=False,
         initial_prompt=initial_prompt,
     )
@@ -82,11 +95,12 @@ def transcribe(episode_dir: Path, glossary_terms: list[str] | None = None) -> li
             "start": round(start, 2),
             "end": round(end, 2),
             "speaker": None,
-            "korean": text,
-            "english": None,
+            "source_text": text,
+            "target_text": None,
             "voice": None,
             "audio_path": None,
             "needs_review": flagged,
+            "ignored": False,
         })
         next_id += 1
         if next_id % 20 == 0:
@@ -102,5 +116,6 @@ def transcribe(episode_dir: Path, glossary_terms: list[str] | None = None) -> li
 
 if __name__ == "__main__":
     episode_dir = Path(sys.argv[1])
-    records = transcribe(episode_dir)
+    source_language = sys.argv[2] if len(sys.argv) > 2 else "ko"
+    records = transcribe(episode_dir, source_language=source_language)
     print(f"wrote {len(records)} segments to {episode_dir / 'segments.json'}")

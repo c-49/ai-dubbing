@@ -41,12 +41,15 @@
   .card-actions { display: flex; gap: 0.5rem; margin-top: 0.25rem; }
   .delete-btn { color: #e58080; border-color: #5a3838; }
   .delete-btn:hover { background: #3a2020; }
+  .lang-badge { font-size: 0.8rem; color: #8fb8e8; background: #1c2b40; border-radius: 10px;
+                padding: 0.15rem 0.6rem; display: inline-block; margin-bottom: 1rem; }
 </style>
 </head>
 <body>
 
 <a class="back" href="/">&larr; Shows</a>
 <h1>{{ show }}</h1>
+<div class="lang-badge">{{ source_language_name }} &rarr; {{ target_language_name }}</div>
 
 <div class="drop-zone" id="dropZone">
   Drag a video here, or click to choose a file
@@ -128,12 +131,13 @@ async function loadEpisodes() {
       actions.appendChild(btn);
     }
 
-    if (ep.status !== 'queued' && ep.status !== 'running') {
+    if (ep.status !== 'running') {
       const delBtn = document.createElement('button');
       delBtn.className = 'delete-btn';
       delBtn.textContent = 'Delete';
       delBtn.addEventListener('click', async () => {
-        if (!confirm(`Delete episode "${ep.name}"? This removes all generated files (transcript, translations, dub, etc.) and cannot be undone.`)) return;
+        const queuedNote = ep.status === 'queued' ? ' (still queued, hasn\'t started yet)' : '';
+        if (!confirm(`Delete episode "${ep.name}"${queuedNote}? This removes all generated files (transcript, translations, dub, etc.) and cannot be undone.`)) return;
         delBtn.disabled = true;
         const res = await fetch(`/api/${SHOW}/${ep.name}`, { method: 'DELETE' });
         if (res.ok) {

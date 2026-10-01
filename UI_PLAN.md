@@ -104,3 +104,20 @@ arguments, browse everything from `http://127.0.0.1:5000`.
 - Where upload temp files land during a large multipart upload (write
   directly to `work/<show>/<episode>/source.mp4` via streaming, not buffered
   in memory, since episodes can be 30-60 min of video).
+- **Manual timestamp editing -- implemented.** Surfaced while reviewing a
+  real multi-speaker dub where diarization/VAD occasionally mis-times a
+  segment (see LANGUAGE_PLAN.md M12 notes on the Japanese test clip). The
+  Time column now has small start/end number inputs (step 0.1s) alongside
+  the existing seek/play button. Editing re-synthesizes and re-fits the
+  edited segment (and the previous segment too, since its available slot
+  depends on this segment's start) from a fresh, not-yet-sped-up clip before
+  calling `fit_segment` again -- `atempo` isn't idempotent, so always
+  resetting first avoids compounding speedups.
+  - **Known limitation:** editing a segment's *end* can change whether the
+    *next* segment's source lines "originally overlapped" (which controls
+    whether timing is allowed to shorten it) -- the next segment isn't
+    automatically re-fit when that happens, so it can go stale until it's
+    next edited or the episode is fully re-run. Only the immediate
+    start/previous-segment interaction is kept in sync automatically.
+  - As with text/voice edits, a changed timestamp doesn't automatically
+    regenerate `dubbed.mp4` -- hit "Re-run mix" afterward.

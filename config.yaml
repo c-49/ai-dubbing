@@ -5,6 +5,44 @@ paths:
   shows_dir: shows
   work_dir: work
 
+# Allowlist of language pairs a show can be configured with. Adding a new
+# source/target language is a config edit here, not a code change -- see
+# LANGUAGE_PLAN.md.
+languages:
+  source:
+    ko:
+      name: Korean
+      whisper_code: ko
+    ja:
+      name: Japanese
+      whisper_code: ja
+      # Rapid back-and-forth Japanese dialogue didn't hit the Korean-tuned
+      # 500ms silence gap between lines, merging several lines into one
+      # Whisper segment (confirmed on a real clip -- splitting at 300ms
+      # fixed it with no drop in avg_logprob). See LANGUAGE_PLAN.md M8.
+      vad_overrides:
+        min_silence_duration_ms: 300
+  target:
+    en:
+      name: English
+      words_per_second: 2.3    # empirically tuned against real English TTS/timing (Milestone 2)
+      kokoro_lang_code: a
+      default_voice: af_bella
+      # Confirmed against Kokoro-82M's HF repo file listing (voices/*.pt),
+      # not guessed -- see LANGUAGE_PLAN.md M10.
+      voice_prefixes: [af, am, bf, bm]
+    es:
+      name: Spanish
+      # UNVALIDATED placeholder (Spanish speech is generally cited as faster
+      # than English) -- needs the same empirical tuning English got, against
+      # real Spanish TTS output. See LANGUAGE_PLAN.md M10.
+      words_per_second: 2.8
+      kokoro_lang_code: e    # espeak-ng-backed (misaki.espeak), not a bundled G2P like 'a'/'j'
+      default_voice: ef_dora
+      # Only 3 voices exist for Spanish today (vs. 20 for English) -- confirmed
+      # against Kokoro-82M's HF repo file listing, not guessed.
+      voice_prefixes: [ef, em]
+
 models:
   whisper:
     size: large-v3       # used from Milestone 1 onward; downloads ~3GB on first real use
@@ -25,8 +63,7 @@ models:
     model: qwen2.5:7b     # better Korean handling than llama3; pulled during Milestone 0
     host: http://localhost:11434
   tts:
-    engine: kokoro
-    default_voice: af_bella
+    engine: kokoro    # default_voice is now per-target-language, under languages.target.<code>
 
 translation:
   chunk_size: 25          # segments per translation request
@@ -37,7 +74,7 @@ timing:
 
 mix_levels:
   music_effects: 1.0
-  original_vocals_ducked: 0.12    # original Korean vocals level while a dub line is playing
+  original_vocals_ducked: 0.12    # original-language vocals level while a dub line is playing
   original_vocals_unducked: 0.9   # level elsewhere (no dub competing for attention)
   duck_fade_ms: 150               # crossfade length when ducking in/out, to avoid clicks
   english_dub: 1.0
