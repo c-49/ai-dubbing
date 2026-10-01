@@ -1,0 +1,44 @@
+# Paths, model choices, and mix levels for the dubbing pipeline.
+# Tune these as milestones progress; nothing here is final.
+
+paths:
+  shows_dir: shows
+  work_dir: work
+
+models:
+  whisper:
+    size: large-v3       # used from Milestone 1 onward; downloads ~3GB on first real use
+    device: cpu
+    compute_type: int8
+    vad:
+      threshold: 0.4            # lower than faster-whisper's 0.5 default, to catch quieter/mumbled lines
+      min_silence_duration_ms: 500   # default 2000; shorter so nearby lines don't get merged into one blob
+      max_speech_duration_s: 20       # force-split any chunk longer than this
+      speech_pad_ms: 200
+  demucs:
+    model: htdemucs
+    device: cpu
+  pyannote:
+    pipeline: pyannote/speaker-diarization-3.1
+    device: cpu
+  ollama:
+    model: qwen2.5:7b     # better Korean handling than llama3; pulled during Milestone 0
+    host: http://localhost:11434
+  tts:
+    engine: kokoro
+    default_voice: af_bella
+
+translation:
+  chunk_size: 25          # segments per translation request
+  context_lines: 3        # lines of surrounding context included
+
+timing:
+  max_speedup: 1.25       # cap on speeding up a TTS clip to fit its slot
+
+mix_levels:
+  music_effects: 1.0
+  original_vocals_ducked: 0.12    # original Korean vocals level while a dub line is playing
+  original_vocals_unducked: 0.9   # level elsewhere (no dub competing for attention)
+  duck_fade_ms: 150               # crossfade length when ducking in/out, to avoid clicks
+  english_dub: 1.0
+  target_loudness_lufs: -16.0     # final mix normalization target (common for online video)

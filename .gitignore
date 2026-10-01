@@ -1,0 +1,7 @@
+venv/
+work/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+shows/*/incoming/*
+!shows/*/incoming/.gitkeep

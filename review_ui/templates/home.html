@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dub Review -- Shows</title>
+<style>
+  html { color-scheme: dark; }
+  body { font-family: system-ui, sans-serif; margin: 1.5rem; background: #1a1b1e; color: #e4e4e7; }
+  h1 { font-size: 1.3rem; margin-bottom: 1rem; }
+  .shows { display: flex; gap: 1rem; flex-wrap: wrap; }
+  .show-card { background: #232428; border: 1px solid #3a3c42; border-radius: 8px; padding: 1rem 1.25rem;
+               min-width: 200px; text-decoration: none; color: inherit; }
+  .show-card:hover { border-color: #5a5d66; }
+  .show-card h2 { margin: 0 0 0.25rem; font-size: 1.1rem; }
+  .show-card .meta { font-size: 0.85rem; color: #9a9ca3; }
+  .empty { color: #9a9ca3; }
+  .new-show { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1.5rem; }
+  .new-show input { padding: 0.4rem 0.6rem; border: 1px solid #3a3c42; border-radius: 6px; font-size: 0.9rem;
+                     background: #232428; color: #e4e4e7; }
+  .new-show button { cursor: pointer; border: 1px solid #3a3c42; background: #232428; color: #e4e4e7;
+                      border-radius: 6px; padding: 0.4rem 0.8rem; }
+  .new-show button:hover { background: #2a2c31; }
+  .new-show button:disabled { opacity: 0.5; cursor: default; }
+  #newShowError { color: #e58080; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+
+<h1>Shows</h1>
+
+<form class="new-show" id="newShowForm">
+  <input type="text" id="newShowName" placeholder="new show name" autocomplete="off">
+  <button type="submit">New show</button>
+  <span id="newShowError"></span>
+</form>
+
+{% if shows %}
+<div class="shows" id="shows">
+  {% for show in shows %}
+  <a class="show-card" href="/show/{{ show.name }}">
+    <h2>{{ show.name }}</h2>
+    <div class="meta">{{ show.episode_count }} episode{{ '' if show.episode_count == 1 else 's' }}</div>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<p class="empty" id="emptyMsg">No shows yet. Create one above.</p>
+{% endif %}
+
+<script>
+document.getElementById('newShowForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const input = document.getElementById('newShowName');
+  const errorEl = document.getElementById('newShowError');
+  const btn = e.target.querySelector('button');
+  const name = input.value.trim();
+  errorEl.textContent = '';
+  if (!name) return;
+
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/shows', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    const result = await res.json();
+    if (!res.ok) {
+      errorEl.textContent = result.error || 'Failed to create show';
+      return;
+    }
+    window.location.href = `/show/${result.name}`;
+  } catch (err) {
+    errorEl.textContent = 'Failed: ' + err;
+  } finally {
+    btn.disabled = false;
+  }
+});
+</script>
+
+</body>
+</html>

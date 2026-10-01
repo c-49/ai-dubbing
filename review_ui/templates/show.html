@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dub Review -- {{ show }}</title>
+<style>
+  html { color-scheme: dark; }
+  body { font-family: system-ui, sans-serif; margin: 1.5rem; background: #1a1b1e; color: #e4e4e7; }
+  .back { font-size: 0.85rem; color: #9a9ca3; text-decoration: none; }
+  .back:hover { text-decoration: underline; }
+  h1 { font-size: 1.3rem; margin: 0.25rem 0 1rem; }
+
+  .drop-zone {
+    border: 2px dashed #4a4c54; border-radius: 10px; padding: 1.5rem; text-align: center;
+    color: #9a9ca3; margin-bottom: 0.75rem; cursor: pointer; background: #232428;
+  }
+  .drop-zone.drag-over { border-color: #5aa0e8; background: #1c2b40; color: #8fb8e8; }
+  .drop-zone input[type=file] { display: none; }
+
+  .toolbar { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
+  button { cursor: pointer; border: 1px solid #3a3c42; background: #232428; color: #e4e4e7; border-radius: 6px; padding: 0.4rem 0.8rem; }
+  button:hover { background: #2a2c31; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  #uploadStatus { font-size: 0.85rem; color: #9a9ca3; }
+  #uploadStatus.error { color: #e58080; }
+
+  .episodes { display: flex; gap: 1rem; flex-wrap: wrap; }
+  .episode-card { background: #232428; border: 1px solid #3a3c42; border-radius: 8px; padding: 1rem 1.25rem; min-width: 220px; }
+  .episode-card h2 { margin: 0 0 0.35rem; font-size: 1.05rem; }
+  .episode-card h2 a { color: inherit; text-decoration: none; }
+  .episode-card h2 a:hover { text-decoration: underline; }
+  .meta { font-size: 0.8rem; color: #9a9ca3; margin-bottom: 0.5rem; }
+  .status { font-size: 0.8rem; padding: 0.1rem 0.5rem; border-radius: 10px; display: inline-block; margin-bottom: 0.5rem; }
+  .status.done { background: #1f3a24; color: #7fd68f; }
+  .status.pending { background: #3a331a; color: #e0c070; }
+  .status.queued { background: #1c2b40; color: #8fb8e8; }
+  .status.running { background: #1c2b40; color: #8fb8e8; }
+  .status.failed { background: #3a2020; color: #e58080; }
+  .error-msg { font-size: 0.78rem; color: #e58080; margin-bottom: 0.5rem; max-width: 240px; }
+  .empty { color: #9a9ca3; }
+  .card-actions { display: flex; gap: 0.5rem; margin-top: 0.25rem; }
+  .delete-btn { color: #e58080; border-color: #5a3838; }
+  .delete-btn:hover { background: #3a2020; }
+</style>
+</head>
+<body>
+
+<a class="back" href="/">&larr; Shows</a>
+<h1>{{ show }}</h1>
+
+<div class="drop-zone" id="dropZone">
+  Drag a video here, or click to choose a file
+  <input type="file" id="fileInput" accept="video/*" multiple>
+</div>
+
+<div class="toolbar">
+  <button id="processAllBtn">Process all pending</button>
+  <span id="uploadStatus"></span>
+</div>
+
+<div class="episodes" id="episodes"></div>
+<p class="empty" id="emptyMsg" style="display:none">No episodes yet. Drop a video above to add one.</p>
+
+<script>
+const SHOW = {{ show | tojson }};
+
+function formatDuration(seconds) {
+  if (seconds === null || seconds === undefined) return '';
+  seconds = Math.round(seconds);
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  const mm = h > 0 ? String(m).padStart(2, '0') : String(m);
+  const ss = String(s).padStart(2, '0');
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+const STATUS_LABEL = { pending: 'Pending', queued: 'Queued', running: 'Running', done: 'Dubbed', failed: 'Failed' };
+
+let pollTimer = null;
+
+function scheduleNextPoll(hasActive) {
+  if (pollTimer) clearTimeout(pollTimer);
+  pollTimer = hasActive ? setTimeout(loadEpisodes, 3000) : null;
+}
+
+async function loadEpisodes() {
+  const res = await fetch(`/api/${SHOW}/episodes`);
+  const data = await res.json();
+  const container = document.getElementById('episodes');
+  const emptyMsg = document.getElementById('emptyMsg');
+  container.innerHTML = '';
+  emptyMsg.style.display = data.episodes.length ? 'none' : 'block';
+
+  for (const ep of data.episodes) {
+    const card = document.createElement('div');
+    card.className = 'episode-card';
+
+    const metaParts = [];
+    if (ep.duration_sec != null) metaParts.push(formatDuration(ep.duration_sec));
+    if (ep.width && ep.height) metaParts.push(`${ep.width}x${ep.height}`);
+
+    card.innerHTML = `
+      <h2><a href="/show/${SHOW}/${ep.name}">${ep.name}</a></h2>
+      <span class="status ${ep.status}">${STATUS_LABEL[ep.status] || ep.status}</span>
+      ${metaParts.length ? `<div class="meta">${metaParts.join(' -- ')}</div>` : ''}
+      ${ep.status === 'running' && ep.stage ? `<div class="meta">Stage ${ep.stage}</div>` : ''}
+      ${ep.status === 'failed' && ep.error ? `<div class="error-msg">${ep.error}${ep.stage ? ` (at ${ep.stage})` : ''}</div>` : ''}
+    `;
+
+    const actions = document.createElement('div');
+    actions.className = 'card-actions';
+
+    if (ep.status === 'pending' || ep.status === 'failed') {
+      const btn = document.createElement('button');
+      btn.textContent = ep.status === 'failed' ? 'Retry' : 'Start';
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        const res = await fetch(`/api/${SHOW}/${ep.name}/start`, { method: 'POST' });
+        if (res.ok) {
+          await loadEpisodes();
+        } else {
+          const result = await res.json();
+          alert(result.error || 'Failed to start');
+          btn.disabled = false;
+        }
+      });
+      actions.appendChild(btn);
+    }
+
+    if (ep.status !== 'queued' && ep.status !== 'running') {
+      const delBtn = document.createElement('button');
+      delBtn.className = 'delete-btn';
+      delBtn.textContent = 'Delete';
+      delBtn.addEventListener('click', async () => {
+        if (!confirm(`Delete episode "${ep.name}"? This removes all generated files (transcript, translations, dub, etc.) and cannot be undone.`)) return;
+        delBtn.disabled = true;
+        const res = await fetch(`/api/${SHOW}/${ep.name}`, { method: 'DELETE' });
+        if (res.ok) {
+          await loadEpisodes();
+        } else {
+          const result = await res.json();
+          alert(result.error || 'Failed to delete');
+          delBtn.disabled = false;
+        }
+      });
+      actions.appendChild(delBtn);
+    }
+
+    if (actions.children.length) card.appendChild(actions);
+
+    container.appendChild(card);
+  }
+
+  scheduleNextPoll(data.episodes.some(ep => ep.status === 'queued' || ep.status === 'running'));
+}
+
+function setUploadStatus(text, isError) {
+  const el = document.getElementById('uploadStatus');
+  el.textContent = text;
+  el.className = isError ? 'error' : '';
+}
+
+function uploadFile(file, replace) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `/api/${SHOW}/upload`);
+    xhr.upload.addEventListener('progress', (e) => {
+      if (e.lengthComputable) {
+        setUploadStatus(`${replace ? 'Replacing' : 'Uploading'} ${file.name}... ${Math.round((e.loaded / e.total) * 100)}%`);
+      }
+    });
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(JSON.parse(xhr.responseText));
+      } else {
+        let result = {};
+        try { result = JSON.parse(xhr.responseText); } catch (e) { /* ignore */ }
+        const err = new Error(result.error || xhr.statusText);
+        err.exists = !!result.exists;
+        reject(err);
+      }
+    };
+    xhr.onerror = () => reject(new Error('network error'));
+    const formData = new FormData();
+    formData.append('video', file);
+    if (replace) formData.append('replace', '1');
+    xhr.send(formData);
+  });
+}
+
+async function handleFiles(fileList) {
+  for (const file of Array.from(fileList)) {
+    setUploadStatus(`Uploading ${file.name}... 0%`);
+    try {
+      await uploadFile(file);
+    } catch (err) {
+      if (err.exists) {
+        const guessedName = file.name.replace(/\.[^./]+$/, '');
+        const replaceConfirmed = confirm(
+          `Episode "${guessedName}" already exists for this show. Replace it and discard its ` +
+          `existing work (transcript, translations, dub, etc.)?`
+        );
+        if (replaceConfirmed) {
+          try {
+            await uploadFile(file, true);
+            setUploadStatus('');
+          } catch (err2) {
+            setUploadStatus(`Failed to replace ${file.name}: ${err2.message}`, true);
+          }
+        }
+      } else {
+        setUploadStatus(`Failed to upload ${file.name}: ${err.message}`, true);
+      }
+      continue;
+    }
+    setUploadStatus('');
+  }
+  await loadEpisodes();
+}
+
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+
+dropZone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => {
+  if (fileInput.files.length) handleFiles(fileInput.files);
+  fileInput.value = '';
+});
+dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
+});
+
+document.getElementById('processAllBtn').addEventListener('click', async (e) => {
+  e.target.disabled = true;
+  const res = await fetch(`/api/${SHOW}/process-all`, { method: 'POST' });
+  const result = await res.json();
+  e.target.disabled = false;
+  await loadEpisodes();
+  if (!result.queued || !result.queued.length) {
+    setUploadStatus('Nothing pending to process.');
+  }
+});
+
+loadEpisodes();
+</script>
+
+</body>
+</html>
