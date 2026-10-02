@@ -1,0 +1,50 @@
+[project]
+name = "ai-dubbing"
+version = "0.1.0"
+description = "Local Korean/Japanese -> English/Spanish dubbing pipeline + review app"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "faster-whisper>=1.2.1",
+    "demucs>=4.1.0",
+    "pyannote-audio>=4.0.7",
+    "kokoro>=0.9.4",
+    "torchcodec>=0.7",
+    "numpy",
+    "soundfile",
+    "PyYAML",
+    "requests",
+    "flask",
+    # misaki (Kokoro) needs this spaCy model and otherwise tries to pip-download it at runtime.
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+]
+
+# Pick exactly one torch build: `uv sync --extra cpu` or `uv sync --extra cuda`.
+# setup/launcher scripts choose based on detected hardware (see UPGRADE_PLAN.md).
+[project.optional-dependencies]
+cpu = ["torch>=2.8", "torchaudio>=2.8"]
+cuda = ["torch>=2.8", "torchaudio>=2.8"]
+
+[tool.uv]
+package = false
+environments = ["sys_platform == 'win32'"]
+conflicts = [[{ extra = "cpu" }, { extra = "cuda" }]]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cuda", extra = "cuda" },
+]
+torchaudio = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cuda", extra = "cuda" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true

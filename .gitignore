@@ -7,3 +7,4 @@ shows/*/incoming/*
 !shows/*/incoming/.gitkeep
 bin/
 models/
+.venv/
