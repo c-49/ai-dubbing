@@ -9,8 +9,8 @@ Already done by the assistant on this machine:
 - Python 3.11 installed (alongside whatever other Python versions you have), via winget.
 - ffmpeg installed via winget (`ffmpeg`, `ffprobe` on PATH).
 - eSpeak NG installed via winget (Kokoro TTS needs it on Windows).
-- Virtual environment created at `venv/` using Python 3.11.
-- Installed into `venv/`: PyTorch (CPU build), faster-whisper, demucs, pyannote.audio, kokoro.
+- Python environment lives in `.venv/`, built by `uv` from `pyproject.toml` + `uv.lock` (Python 3.11).
+- Installed into `.venv/`: PyTorch (CPU build by default; `uv sync --extra cuda` for NVIDIA), faster-whisper, demucs, pyannote.audio, kokoro.
 - Ollama (already installed) has two models pulled: `llama3:latest` and `qwen2.5:7b`
   (qwen2.5:7b is the default translation model in `config.yaml` -- better at Korean).
 
@@ -30,7 +30,7 @@ Speaker diarization (Milestone 4) uses a gated model on Hugging Face. To use it:
    type "Read" is enough.
 4. Log in from this machine so the token is saved locally:
    ```
-   venv\Scripts\huggingface-cli login
+   .venv\Scripts\huggingface-cli login
    ```
    Paste the token when prompted. This writes the token to
    `~/.cache/huggingface/token`, which `check_setup.py` and the diarization
@@ -41,7 +41,7 @@ You don't need this for Milestones 0-3. It's only required starting Milestone 4.
 ## Running the setup check
 
 ```
-venv\Scripts\python.exe src\check_setup.py
+.venv\Scripts\python.exe src\check_setup.py
 ```
 
 This runs ffmpeg, generates a short Kokoro audio clip, transcribes it back with
@@ -56,7 +56,7 @@ A local web app for browsing shows/episodes and reviewing/fixing a dubbed
 episode before final export:
 
 ```
-venv\Scripts\python.exe review_ui\app.py
+.venv\Scripts\python.exe review_ui\app.py
 ```
 
 Then open http://127.0.0.1:5000 in a browser. The home page lists shows
@@ -103,7 +103,7 @@ the parent folder, so `work/vincenzo/ep5/` means show "vincenzo", episode "ep5".
    `shows/vincenzo/incoming/ep5.mp4` -> `work/vincenzo/ep5/`.
 2. Whenever you're ready (drop as many episodes as you like first):
    ```
-   venv\Scripts\python.exe src\ingest.py
+   .venv\Scripts\python.exe src\ingest.py
    ```
    This moves every video waiting in any show's `incoming/` folder into its
    `work/<show>/<episode-name>/source.mp4`, then runs the full 8-stage
@@ -114,7 +114,7 @@ the parent folder, so `work/vincenzo/ep5/` means show "vincenzo", episode "ep5".
 
    To run just one already-ingested episode by hand instead:
    ```
-   venv\Scripts\python.exe src\run_episode.py work\<show>\<episode-name>
+   .venv\Scripts\python.exe src\run_episode.py work\<show>\<episode-name>
    ```
 
 ### How long this takes
@@ -161,4 +161,5 @@ translations, and adjust voices, then hit "Re-run mix" when you're happy.
 - Target is CPU-only (per hardware constraints), even though this machine also
   has an NVIDIA RTX 4050 -- CUDA was intentionally skipped to keep things simple
   and match the original plan.
-- `requirements.txt` is a frozen `pip freeze` of everything in `venv/`.
+- Dependencies are declared in `pyproject.toml` and pinned in `uv.lock`. Recreate the environment with `uv sync --extra cpu` (or `--extra cuda`). The old `requirements.txt`/`venv/` are legacy and can be deleted once you are happy with `.venv/`.
+- The project is self-contained: ffmpeg and eSpeak NG live in `bin/`, downloaded models in `models/` (the Hugging Face token stays per-user in `~/.cache/huggingface/token`).
