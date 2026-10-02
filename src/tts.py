@@ -12,15 +12,13 @@ import json
 import sys
 from pathlib import Path
 
-import numpy as np
 import soundfile as sf
 import yaml
-from kokoro import KPipeline
 
 import pathfix  # noqa: F401
+import tts_engine
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
-SAMPLE_RATE = 24000
 
 
 def synthesize(episode_dir: Path, voices_path: Path | None = None, target_language: str = "en") -> list[dict]:
@@ -36,7 +34,7 @@ def synthesize(episode_dir: Path, voices_path: Path | None = None, target_langua
     tts_dir = episode_dir / "tts"
     tts_dir.mkdir(exist_ok=True)
 
-    pipeline = KPipeline(lang_code=target_cfg["kokoro_lang_code"])
+    engine = tts_engine.get_engine(target_language)
 
     # "ignored" segments keep their source/target text and timing (useful if
     # a line looked like a transcription hallucination but might not be --
@@ -50,13 +48,12 @@ def synthesize(episode_dir: Path, voices_path: Path | None = None, target_langua
 
     for n, seg in enumerate(todo):
         voice = speaker_voices.get(seg.get("speaker"), default_voice)
-        chunks = [audio for _, _, audio in pipeline(seg["target_text"], voice=voice)]
-        audio = np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
+        audio = engine.synthesize(seg["target_text"], voice, emotion=seg.get("emotion"))
         out_path = tts_dir / f"{seg['id']:04d}.wav"
-        sf.write(out_path, audio, SAMPLE_RATE)
+        sf.write(out_path, audio, engine.sample_rate)
         seg["voice"] = voice
         seg["audio_path"] = str(out_path.relative_to(episode_dir)).replace("\\", "/")
-        print(f"  id={seg['id']} ({seg.get('speaker')}, {voice}): {len(audio) / SAMPLE_RATE:.2f}s -- {seg['target_text']!r}")
+        print(f"  id={seg['id']} ({seg.get('speaker')}, {voice}): {len(audio) / engine.sample_rate:.2f}s -- {seg['target_text']!r}")
         if (n + 1) % 20 == 0 or n + 1 == len(todo):
             print(f"  TTS: {n + 1}/{len(todo)}")
         segments_path.write_text(json.dumps(segments, ensure_ascii=False, indent=2), encoding="utf-8")

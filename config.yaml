@@ -64,6 +64,17 @@ models:
     host: http://localhost:11434
   tts:
     engine: kokoro    # default_voice is now per-target-language, under languages.target.<code>
+    # Registry for src/tts_engine.py. Add `worker: {python: <venv python>}` to
+    # run an engine in its own venv as a subprocess (frees VRAM when it exits).
+    engines:
+      kokoro:
+        class: "engines.kokoro_engine:KokoroEngine"
+      stub:             # test engine: sine tones, for exercising the abstraction
+        class: "engines.stub_engine:StubEngine"
+      stub_worker:      # same stub, run as a subprocess worker (tests that path)
+        class: "engines.stub_engine:StubEngine"
+        worker:
+          python: .venv/Scripts/python.exe
 
 translation:
   chunk_size: 25          # segments per translation request

@@ -27,9 +27,8 @@ sys.path.insert(0, str(SRC_DIR))
 import pathfix  # noqa: E402,F401
 import json  # noqa: E402
 import yaml  # noqa: E402
-from kokoro import KPipeline  # noqa: E402
+import tts_engine  # noqa: E402
 import soundfile as sf  # noqa: E402
-import numpy as np  # noqa: E402
 
 import ingest  # noqa: E402 (just file-extension constants + ingest helpers, lightweight)
 from timing import fit_segment, clip_duration  # noqa: E402
@@ -39,7 +38,6 @@ ROOT_DIR = SRC_DIR.parent
 CONFIG_PATH = ROOT_DIR / "config.yaml"
 SHOWS_DIR = ROOT_DIR / "shows"
 WORK_DIR = ROOT_DIR / "work"
-TTS_SAMPLE_RATE = 24000
 
 # Work directories that aren't shows (scratch space used by other scripts).
 IGNORED_SHOW_DIRS = {"_setup_check"}
@@ -68,7 +66,6 @@ VOICES = {
 }
 
 app = Flask(__name__)
-_tts_pipelines: dict[str, "KPipeline"] = {}  # keyed by Kokoro lang_code ("a", "e", ...)
 
 # Single background worker: only one episode's pipeline runs at a time (also
 # enforced across processes by run_episode.py's work/.pipeline.lock, so a
@@ -146,12 +143,6 @@ def _reconcile_stale_statuses() -> None:
             if status and status.get("status") in ("queued", "running"):
                 status["status"] = "pending"
                 save_json(status_path, status)
-
-
-def get_tts_pipeline(kokoro_lang_code: str = "a") -> KPipeline:
-    if kokoro_lang_code not in _tts_pipelines:
-        _tts_pipelines[kokoro_lang_code] = KPipeline(lang_code=kokoro_lang_code)
-    return _tts_pipelines[kokoro_lang_code]
 
 
 def load_json(path: Path):
@@ -248,12 +239,11 @@ def get_show_language_info(show: str) -> dict:
     }
 
 
-def synthesize_clip(episode_dir: Path, seg: dict, kokoro_lang_code: str = "a") -> None:
-    pipeline = get_tts_pipeline(kokoro_lang_code)
-    chunks = [audio for _, _, audio in pipeline(seg["target_text"], voice=seg["voice"])]
-    audio = np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
+def synthesize_clip(episode_dir: Path, seg: dict, target_language: str = "en") -> None:
+    engine = tts_engine.get_engine(target_language)
+    audio = engine.synthesize(seg["target_text"], seg["voice"], emotion=seg.get("emotion"))
     out_path = episode_dir / seg["audio_path"]
-    sf.write(out_path, audio, TTS_SAMPLE_RATE)
+    sf.write(out_path, audio, engine.sample_rate)
 
 
 def refit_segment(show: str, episode_dir: Path, segments: list[dict], idx: int) -> None:
@@ -264,7 +254,7 @@ def refit_segment(show: str, episode_dir: Path, segments: list[dict], idx: int) 
 
     fit_segment(
         episode_dir, segments, idx, config["timing"]["max_speedup"],
-        ollama_cfg["model"], ollama_cfg["host"], get_tts_pipeline(lang_info["kokoro_lang_code"]),
+        ollama_cfg["model"], ollama_cfg["host"], tts_engine.get_engine(lang_info["target_language"]),
         lang_info["source_language_name"], lang_info["target_language_name"], lang_info["words_per_second"],
         # Never auto-rewrite text behind the reviewer's back -- every call
         # here follows an interactive edit (text, voice, or timestamp), so a
@@ -483,7 +473,7 @@ def update_segment(show, episode, seg_id):
         seg["needs_review"] = bool(data["needs_review"])
 
     lang_info = get_show_language_info(show)
-    kokoro_lang_code = lang_info["kokoro_lang_code"]
+    target_language = lang_info["target_language"]
 
     if "ignored" in data:
         new_ignored = bool(data["ignored"])
@@ -512,7 +502,7 @@ def update_segment(show, episode, seg_id):
 
     affected = [seg]
     if (regenerate or retimed) and seg.get("audio_path") and not seg.get("ignored"):
-        synthesize_clip(episode_dir, seg, kokoro_lang_code)
+        synthesize_clip(episode_dir, seg, target_language)
         refit_segment(show, episode_dir, segments, idx)
 
     # Moving this segment's start also changes the previous segment's
@@ -522,7 +512,7 @@ def update_segment(show, episode, seg_id):
     # docstring: mutates the clip on disk at most once per call).
     if retimed and idx > 0 and segments[idx - 1].get("audio_path") and not segments[idx - 1].get("ignored"):
         prev = segments[idx - 1]
-        synthesize_clip(episode_dir, prev, kokoro_lang_code)
+        synthesize_clip(episode_dir, prev, target_language)
         refit_segment(show, episode_dir, segments, idx - 1)
         affected.append(prev)
 
@@ -546,14 +536,14 @@ def update_speaker_voice(show, episode, speaker):
     voices_path.parent.mkdir(parents=True, exist_ok=True)
     save_json(voices_path, voices)
 
-    kokoro_lang_code = get_show_language_info(show)["kokoro_lang_code"]
+    target_language = get_show_language_info(show)["target_language"]
 
     segments = load_json(episode_dir / "segments.json")
     for idx, seg in enumerate(segments):
         if seg.get("speaker") == speaker and seg.get("target_text"):
             seg["voice"] = voice  # recorded either way, so it's already right if un-ignored later
             if not seg.get("ignored"):
-                synthesize_clip(episode_dir, seg, kokoro_lang_code)
+                synthesize_clip(episode_dir, seg, target_language)
                 refit_segment(show, episode_dir, segments, idx)
     save_json(episode_dir / "segments.json", segments)
 

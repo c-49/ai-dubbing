@@ -20,10 +20,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-import numpy as np
 import soundfile as sf
 import yaml
-from kokoro import KPipeline
+import tts_engine
 
 import pathfix  # noqa: F401
 from translate import call_ollama
@@ -68,7 +67,7 @@ def ask_shorter_translation(
 
 def fit_segment(
     episode_dir: Path, segments: list[dict], i: int, max_speedup: float,
-    ollama_model: str, ollama_host: str, tts_pipeline: KPipeline,
+    ollama_model: str, ollama_host: str, engine,
     source_name: str = "Korean", target_name: str = "English", words_per_second: float = 2.3,
     allow_auto_shorten: bool = True,
 ) -> None:
@@ -111,9 +110,8 @@ def fit_segment(
             source_name, target_name, ollama_model, ollama_host,
         ) if allow_auto_shorten else None
         if shorter:
-            chunks = [audio for _, _, audio in tts_pipeline(shorter, voice=seg["voice"])]
-            audio = np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
-            sf.write(clip_path, audio, 24000)
+            audio = engine.synthesize(shorter, seg["voice"], emotion=seg.get("emotion"))
+            sf.write(clip_path, audio, engine.sample_rate)
             seg["target_text"] = shorter
             # A compressed re-translation isn't always natural English (caught
             # one that read as broken, e.g. "Thirds out, dangerous.") -- flag
@@ -149,7 +147,7 @@ def fit_timing(episode_dir: Path, source_language: str = "ko", target_language: 
     target_name = target_cfg["name"]
     words_per_second = target_cfg["words_per_second"]
 
-    tts_pipeline = KPipeline(lang_code=target_cfg["kokoro_lang_code"])
+    engine = tts_engine.get_engine(target_language)
 
     todo = [i for i, s in enumerate(segments) if not s.get("timing_fit")]
     if len(todo) < len(segments):
@@ -157,7 +155,7 @@ def fit_timing(episode_dir: Path, source_language: str = "ko", target_language: 
 
     for n, i in enumerate(todo):
         fit_segment(
-            episode_dir, segments, i, max_speedup, ollama_cfg["model"], ollama_cfg["host"], tts_pipeline,
+            episode_dir, segments, i, max_speedup, ollama_cfg["model"], ollama_cfg["host"], engine,
             source_name, target_name, words_per_second,
         )
         if (n + 1) % 20 == 0 or n + 1 == len(todo):
