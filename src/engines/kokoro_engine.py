@@ -13,7 +13,7 @@ class KokoroEngine:
         device = hardware.resolve_device(settings.get("device", "auto"))
         self._pipeline = KPipeline(lang_code=target_cfg["kokoro_lang_code"], device=device)
 
-    def synthesize(self, text, voice, emotion=None, reference=None) -> np.ndarray:
+    def synthesize(self, text, voice, emotion=None, reference=None, duration=None) -> np.ndarray:
         chunks = [np.asarray(audio) for _, _, audio in self._pipeline(text, voice=voice)]
         return np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
 

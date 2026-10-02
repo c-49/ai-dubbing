@@ -26,7 +26,7 @@ class OmniVoiceEngine:
         self.sample_rate = self._model.sampling_rate
         self._prompts: dict[str, object] = {}
 
-    def synthesize(self, text, voice, emotion=None, reference=None) -> np.ndarray:
+    def synthesize(self, text, voice, emotion=None, reference=None, duration=None) -> np.ndarray:
         kwargs = {}
         if self._speed:
             kwargs["speed"] = self._speed
@@ -36,7 +36,19 @@ class OmniVoiceEngine:
             reference = str(reference)
             if reference not in self._prompts:
                 self._prompts[reference] = self._model.create_voice_clone_prompt(ref_audio=reference)
+                # The built-in reference transcriber (Whisper) loads on first use and
+                # would otherwise stay resident, pushing a 6GB card into slow spill.
+                self._model._asr_pipe = None
+                hardware.release_gpu()
             kwargs["voice_clone_prompt"] = self._prompts[reference]
+        audio = self._generate(text, kwargs)
+        # If the natural reading overruns the line's slot, regenerate with the
+        # model's fixed-duration mode so it paces itself to fit.
+        if duration and len(audio) / self.sample_rate > duration:
+            audio = self._generate(text, {**kwargs, "duration": max(0.3, duration)})
+        return audio
+
+    def _generate(self, text, kwargs) -> np.ndarray:
         audio = self._model.generate(text=text, language=self._language, **kwargs)[0]
         return np.asarray(audio, dtype=np.float32).squeeze()
 

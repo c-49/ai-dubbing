@@ -25,7 +25,7 @@ class ChatterboxEngine:
         self._model = ChatterboxMultilingualTTS.from_pretrained(device=self._device)
         self.sample_rate = self._model.sr
 
-    def synthesize(self, text, voice, emotion=None, reference=None) -> np.ndarray:
+    def synthesize(self, text, voice, emotion=None, reference=None, duration=None) -> np.ndarray:
         if self._seed is not None:
             torch.manual_seed(self._seed)
         exaggeration = float(emotion) if isinstance(emotion, (int, float)) else self._exaggeration

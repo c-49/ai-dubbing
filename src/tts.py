@@ -16,6 +16,7 @@ import soundfile as sf
 import yaml
 
 import pathfix  # noqa: F401
+import timing
 import tts_engine
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
@@ -47,8 +48,10 @@ def synthesize(episode_dir: Path, voices_path: Path | None = None, target_langua
         print(f"  resuming: {done_count} clips already generated, skipping those")
 
     for n, seg in enumerate(todo):
+        slot = timing.slot_seconds(segments, segments.index(seg))
         voice = speaker_voices.get(seg.get("speaker"), default_voice)
-        audio = engine.synthesize(seg["target_text"], voice, emotion=seg.get("emotion"), reference=seg.get("reference"))
+        audio = engine.synthesize(seg["target_text"], voice, emotion=seg.get("emotion"), reference=seg.get("reference"),
+                                  duration=slot)
         out_path = tts_dir / f"{seg['id']:04d}.wav"
         sf.write(out_path, audio, engine.sample_rate)
         seg["voice"] = voice

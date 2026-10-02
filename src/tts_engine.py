@@ -5,11 +5,13 @@ config (models.tts.engine) without touching any caller.
 An engine is a class with:
     sample_rate: int
     __init__(target_cfg: dict, settings: dict)   # languages.target.<code> (+ "code"), models.tts.engines.<name>.settings
-    synthesize(text, voice, emotion=None, reference=None) -> np.ndarray (mono float32)
+    synthesize(text, voice, emotion=None, reference=None, duration=None) -> np.ndarray (mono float32)
     close() -> None                               # free VRAM/RAM
 
-`emotion` and `reference` (path to a reference clip) are optional hints; an
-engine that doesn't support them ignores them.
+`emotion`, `reference` (path to a reference clip) and `duration` (seconds the
+line should fit in, i.e. its time slot) are optional hints; an engine that
+doesn't support them ignores them. timing.py still speeds up / shortens
+whatever doesn't fit afterwards.
 
 Engines are registered in config.yaml under models.tts.engines.<name>:
     class: "engines.kokoro_engine:KokoroEngine"
@@ -70,11 +72,12 @@ class WorkerEngine:
             raise RuntimeError(f"TTS worker error: {reply.get('error')}")
         return reply
 
-    def synthesize(self, text, voice, emotion=None, reference=None) -> np.ndarray:
+    def synthesize(self, text, voice, emotion=None, reference=None, duration=None) -> np.ndarray:
         with self._lock, tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "out.wav"
             request = {"text": text, "voice": voice, "emotion": emotion,
-                       "reference": str(reference) if reference else None, "out": str(out)}
+                       "reference": str(reference) if reference else None, "duration": duration,
+                       "out": str(out)}
             self._proc.stdin.write(json.dumps(request) + "\n")
             self._proc.stdin.flush()
             self._read_reply()
@@ -120,7 +123,7 @@ def release_engines() -> None:
 
 
 def synthesize(text: str, voice: str, target_language: str, emotion=None, reference=None,
-               engine_name: str | None = None) -> tuple[np.ndarray, int]:
+               duration=None, engine_name: str | None = None) -> tuple[np.ndarray, int]:
     """Convenience: returns (audio, sample_rate)."""
     engine = get_engine(target_language, engine_name)
-    return engine.synthesize(text, voice, emotion=emotion, reference=reference), engine.sample_rate
+    return engine.synthesize(text, voice, emotion=emotion, reference=reference, duration=duration), engine.sample_rate

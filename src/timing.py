@@ -66,6 +66,14 @@ def ask_shorter_translation(
         return None
 
 
+def slot_seconds(segments: list[dict], i: int) -> float | None:
+    """Seconds available to segment i before the next line starts, or None if
+    it is last or the original speech overlapped the next line too."""
+    if i + 1 >= len(segments) or segments[i + 1]["start"] < segments[i]["end"]:
+        return None
+    return segments[i + 1]["start"] - segments[i]["start"]
+
+
 def fit_segment(
     episode_dir: Path, segments: list[dict], i: int, max_speedup: float,
     ollama_model: str, ollama_host: str, engine,
@@ -111,7 +119,8 @@ def fit_segment(
             source_name, target_name, ollama_model, ollama_host,
         ) if allow_auto_shorten else None
         if shorter:
-            audio = engine.synthesize(shorter, seg["voice"], emotion=seg.get("emotion"), reference=seg.get("reference"))
+            audio = engine.synthesize(shorter, seg["voice"], emotion=seg.get("emotion"), reference=seg.get("reference"),
+                                      duration=available)
             sf.write(clip_path, audio, engine.sample_rate)
             seg["target_text"] = shorter
             # A compressed re-translation isn't always natural English (caught

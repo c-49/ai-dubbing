@@ -84,6 +84,10 @@ models:
         class: "engines.omnivoice_engine:OmniVoiceEngine"
         worker:
           python: .venv-engines/omnivoice/Scripts/python.exe
+      indextts:         # voice cloning candidate (M4 bake-off); env in third_party/index-tts
+        class: "engines.indextts_engine:IndexTTSEngine"
+        worker:
+          python: third_party/index-tts/.venv/Scripts/python.exe
       stub_worker:      # same stub, run as a subprocess worker (tests that path)
         class: "engines.stub_engine:StubEngine"
         worker:

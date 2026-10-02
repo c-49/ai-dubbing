@@ -213,3 +213,24 @@ lines (plus a Spanish sample), run them through the normal timing-fit + mix,
 and compare the resulting `dubbed.mp4` files by ear against Kokoro. Each
 candidate gets its own venv under `.venv-engines/`, run through the M3
 subprocess-worker interface.
+
+### M4 bake-off findings (so far)
+- **IndexTTS-2.5: ruled out on this machine.** Weights alone use ~5.1GB even
+  in bf16 and the peak hits the full 6GB, so Windows spills VRAM into system
+  RAM and a 3.7s line takes ~170-300s (RTF ~45-80). Engine code and config
+  entry are kept (`engines/indextts_engine.py`, `third_party/index-tts`) in
+  case a larger GPU shows up; it is the only candidate with emotion-from-audio.
+- **OmniVoice:** fast once its built-in Whisper reference transcriber is freed
+  after the first line per speaker (234s for 25 lines; was 1252s while that
+  model stayed resident and pushed the card into spill). Without a duration
+  hint it ran long on many lines; with the `duration` hint (regenerate in
+  fixed-duration mode when the natural take overruns the slot) every line fit,
+  needing at most 1.18x speed-up.
+- **Chatterbox:** 290s for 25 lines, but produced glitch takes (a 0.12s clip
+  for a full sentence, a 10.6s clip for a 6-word line). Needs the retry +
+  sanity-check loop; no duration control, so more lines needed speed-up/shorten.
+- **Lesson:** on a 6GB card, any extra resident model (ASR, Ollama) next to the
+  TTS model can silently trigger VRAM spill and a 5-10x slowdown. Engines must
+  free helper models; always compare timings against VRAM peak.
+- The engine interface gained `duration=None` (slot seconds) so engines with
+  duration control can fit the line themselves.

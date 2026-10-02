@@ -37,7 +37,8 @@ def main() -> None:
             break
         try:
             audio = engine.synthesize(request["text"], request["voice"],
-                                      emotion=request.get("emotion"), reference=request.get("reference"))
+                                      emotion=request.get("emotion"), reference=request.get("reference"),
+                                      duration=request.get("duration"))
             sf.write(request["out"], audio, engine.sample_rate)
             reply(ok=True)
         except Exception as e:
