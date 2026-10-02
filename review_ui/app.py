@@ -10,6 +10,7 @@ to), play back individual TTS clips, filter to flagged lines, and re-run
 the final mix -- without touching the terminal.
 """
 import queue
+import random
 import re
 import shutil
 import subprocess
@@ -18,7 +19,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from flask import Flask, abort, jsonify, request, send_from_directory, render_template
+from flask import Flask, abort, jsonify, request, send_file, send_from_directory, render_template
 from werkzeug.utils import secure_filename
 
 SRC_DIR = Path(__file__).resolve().parent.parent / "src"
@@ -27,11 +28,12 @@ sys.path.insert(0, str(SRC_DIR))
 import pathfix  # noqa: E402,F401
 import json  # noqa: E402
 import yaml  # noqa: E402
+import references  # noqa: E402
 import tts_engine  # noqa: E402
 import soundfile as sf  # noqa: E402
 
 import ingest  # noqa: E402 (just file-extension constants + ingest helpers, lightweight)
-from timing import fit_segment, clip_duration  # noqa: E402
+from timing import fit_segment, clip_duration, slot_seconds  # noqa: E402
 from mix import mix as run_mix  # noqa: E402
 
 ROOT_DIR = SRC_DIR.parent
@@ -239,11 +241,21 @@ def get_show_language_info(show: str) -> dict:
     }
 
 
-def synthesize_clip(episode_dir: Path, seg: dict, target_language: str = "en") -> None:
-    engine = tts_engine.get_engine(target_language)
-    audio = engine.synthesize(seg["target_text"], seg["voice"], emotion=seg.get("emotion"))
+def set_clone_reference(show: str, episode_dir: Path, seg: dict) -> bool:
+    """For a segment using the cloned voice, points it at its speaker's
+    current reference clip (building the automatic one if needed). Returns
+    False if a clone was requested but no reference could be found."""
+    if seg.get("voice") != tts_engine.CLONE_VOICE:
+        return True
+    references.ensure_references(episode_dir)
+    seg["reference"] = references.resolve_reference(show, episode_dir, seg.get("speaker"))
+    return bool(seg["reference"])
+
+
+def synthesize_clip(episode_dir: Path, seg: dict, target_language: str = "en", slot: float | None = None) -> None:
+    audio, sample_rate = tts_engine.synthesize_segment(seg, seg["target_text"], target_language, duration=slot)
     out_path = episode_dir / seg["audio_path"]
-    sf.write(out_path, audio, engine.sample_rate)
+    sf.write(out_path, audio, sample_rate)
 
 
 def refit_segment(show: str, episode_dir: Path, segments: list[dict], idx: int) -> None:
@@ -254,7 +266,7 @@ def refit_segment(show: str, episode_dir: Path, segments: list[dict], idx: int) 
 
     fit_segment(
         episode_dir, segments, idx, config["timing"]["max_speedup"],
-        ollama_cfg["model"], ollama_cfg["host"], tts_engine.get_engine(lang_info["target_language"]),
+        ollama_cfg["model"], ollama_cfg["host"], lang_info["target_language"],
         lang_info["source_language_name"], lang_info["target_language_name"], lang_info["words_per_second"],
         # Never auto-rewrite text behind the reviewer's back -- every call
         # here follows an interactive edit (text, voice, or timestamp), so a
@@ -447,7 +459,7 @@ def get_data(show, episode):
         "speakers": speakers,
         # Scoped to this show's own target language -- a Spanish-target show
         # should only ever be offered Spanish voices, not a mixed list.
-        "voices": VOICES[lang_info["target_language"]],
+        "voices": {"cloned": [tts_engine.CLONE_VOICE], **VOICES[lang_info["target_language"]]},
         **lang_info,
     })
 
@@ -468,6 +480,8 @@ def update_segment(show, episode, seg_id):
         regenerate = True
     if "voice" in data and data["voice"] != seg["voice"]:
         seg["voice"] = data["voice"]
+        if not set_clone_reference(show, episode_dir, seg):
+            return jsonify({"error": "no reference clip available for this speaker"}), 400
         regenerate = True
     if "needs_review" in data:
         seg["needs_review"] = bool(data["needs_review"])
@@ -502,7 +516,7 @@ def update_segment(show, episode, seg_id):
 
     affected = [seg]
     if (regenerate or retimed) and seg.get("audio_path") and not seg.get("ignored"):
-        synthesize_clip(episode_dir, seg, target_language)
+        synthesize_clip(episode_dir, seg, target_language, slot_seconds(segments, idx))
         refit_segment(show, episode_dir, segments, idx)
 
     # Moving this segment's start also changes the previous segment's
@@ -512,7 +526,7 @@ def update_segment(show, episode, seg_id):
     # docstring: mutates the clip on disk at most once per call).
     if retimed and idx > 0 and segments[idx - 1].get("audio_path") and not segments[idx - 1].get("ignored"):
         prev = segments[idx - 1]
-        synthesize_clip(episode_dir, prev, target_language)
+        synthesize_clip(episode_dir, prev, target_language, slot_seconds(segments, idx - 1))
         refit_segment(show, episode_dir, segments, idx - 1)
         affected.append(prev)
 
@@ -542,12 +556,79 @@ def update_speaker_voice(show, episode, speaker):
     for idx, seg in enumerate(segments):
         if seg.get("speaker") == speaker and seg.get("target_text"):
             seg["voice"] = voice  # recorded either way, so it's already right if un-ignored later
+            if not set_clone_reference(show, episode_dir, seg):
+                return jsonify({"error": f"no reference clip available for {speaker}"}), 400
             if not seg.get("ignored"):
-                synthesize_clip(episode_dir, seg, target_language)
+                synthesize_clip(episode_dir, seg, target_language, slot_seconds(segments, idx))
                 refit_segment(show, episode_dir, segments, idx)
     save_json(episode_dir / "segments.json", segments)
 
     return jsonify({"speaker": speaker, "voice": voice, "segments": segments})
+
+
+@app.post("/api/<show>/<episode>/speaker/<speaker>/reference")
+def update_speaker_reference(show, episode, speaker):
+    """Choose which clip is this speaker's cloning reference for the whole
+    show: one of the speaker's sample clips, or "auto" to go back to the
+    automatically joined best lines."""
+    episode_dir = get_episode_dir(show, episode)
+    clip = request.get_json()["clip"]
+    speakers = load_json(episode_dir / "speakers.json") or {}
+    if speaker not in speakers:
+        return jsonify({"error": "unknown speaker"}), 404
+
+    speakers[speaker]["reference_clip"] = clip
+    save_json(episode_dir / "speakers.json", speakers)
+    override = SHOWS_DIR / show / "references" / f"{speaker}.wav"
+    if clip == "auto":
+        override.unlink(missing_ok=True)
+    else:
+        if clip not in speakers[speaker].get("sample_clips", []):
+            return jsonify({"error": "not one of this speaker's sample clips"}), 400
+        override.parent.mkdir(parents=True, exist_ok=True)
+        data, sr = sf.read(episode_dir / clip, dtype="float32", always_2d=True)
+        sf.write(override, data.mean(axis=1), sr)
+
+    target_language = get_show_language_info(show)["target_language"]
+    segments = load_json(episode_dir / "segments.json")
+    for idx, seg in enumerate(segments):
+        if seg.get("speaker") == speaker and seg.get("voice") == tts_engine.CLONE_VOICE:
+            set_clone_reference(show, episode_dir, seg)
+            if seg.get("target_text") and not seg.get("ignored"):
+                synthesize_clip(episode_dir, seg, target_language, slot_seconds(segments, idx))
+                refit_segment(show, episode_dir, segments, idx)
+    save_json(episode_dir / "segments.json", segments)
+    return jsonify({"speaker": speaker, "clip": clip, "segments": segments})
+
+
+@app.get("/api/<show>/<episode>/speaker/<speaker>/reference.wav")
+def speaker_reference_audio(show, episode, speaker):
+    episode_dir = get_episode_dir(show, episode)
+    references.ensure_references(episode_dir)
+    ref = references.resolve_reference(show, episode_dir, speaker)
+    if not ref:
+        abort(404)
+    return send_file(references.ROOT_DIR / ref, mimetype="audio/wav")
+
+
+@app.post("/api/<show>/<episode>/segment/<int:seg_id>/regenerate")
+def regenerate_segment(show, episode, seg_id):
+    """Re-rolls one line: a cloned take varies with its seed, so this is the
+    'that one sounded off, try again' button. Stock voices just redo it."""
+    episode_dir = get_episode_dir(show, episode)
+    segments = load_json(episode_dir / "segments.json")
+    idx = next((i for i, s in enumerate(segments) if s["id"] == seg_id), None)
+    if idx is None:
+        return jsonify({"error": "segment not found"}), 404
+    seg = segments[idx]
+    if not seg.get("audio_path") or seg.get("ignored"):
+        return jsonify({"error": "this line has no dub clip"}), 400
+    seg["seed_base"] = random.randrange(10**6) * 100
+    target_language = get_show_language_info(show)["target_language"]
+    synthesize_clip(episode_dir, seg, target_language, slot_seconds(segments, idx))
+    refit_segment(show, episode_dir, segments, idx)
+    save_json(episode_dir / "segments.json", segments)
+    return jsonify({"segments": [seg]})
 
 
 @app.post("/api/<show>/<episode>/remix")

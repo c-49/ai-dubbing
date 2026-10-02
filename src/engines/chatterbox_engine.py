@@ -25,9 +25,10 @@ class ChatterboxEngine:
         self._model = ChatterboxMultilingualTTS.from_pretrained(device=self._device)
         self.sample_rate = self._model.sr
 
-    def synthesize(self, text, voice, emotion=None, reference=None, duration=None) -> np.ndarray:
-        if self._seed is not None:
-            torch.manual_seed(self._seed)
+    def synthesize(self, text, voice, emotion=None, reference=None, duration=None, seed=None) -> np.ndarray:
+        seed = seed if seed is not None else self._seed
+        if seed is not None:
+            torch.manual_seed(seed)
         exaggeration = float(emotion) if isinstance(emotion, (int, float)) else self._exaggeration
         wav = self._model.generate(
             text, language_id=self._language,

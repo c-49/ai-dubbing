@@ -5,11 +5,12 @@ config (models.tts.engine) without touching any caller.
 An engine is a class with:
     sample_rate: int
     __init__(target_cfg: dict, settings: dict)   # languages.target.<code> (+ "code"), models.tts.engines.<name>.settings
-    synthesize(text, voice, emotion=None, reference=None, duration=None) -> np.ndarray (mono float32)
+    synthesize(text, voice, emotion=None, reference=None, duration=None, seed=None) -> np.ndarray (mono float32)
     close() -> None                               # free VRAM/RAM
 
-`emotion`, `reference` (path to a reference clip) and `duration` (seconds the
-line should fit in, i.e. its time slot) are optional hints; an engine that
+`emotion`, `reference` (path to a reference clip), `duration` (seconds the
+line should fit in, i.e. its time slot) and `seed` (makes a sampled take
+reproducible; retries use a different one) are optional hints; an engine that
 doesn't support them ignores them. timing.py still speeds up / shortens
 whatever doesn't fit afterwards.
 
@@ -85,12 +86,12 @@ class WorkerEngine:
             raise RuntimeError(f"TTS worker error: {reply.get('error')}")
         return reply
 
-    def synthesize(self, text, voice, emotion=None, reference=None, duration=None) -> np.ndarray:
+    def synthesize(self, text, voice, emotion=None, reference=None, duration=None, seed=None) -> np.ndarray:
         with self._lock, tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "out.wav"
             request = {"text": text, "voice": voice, "emotion": emotion,
                        "reference": str(reference) if reference else None, "duration": duration,
-                       "out": str(out)}
+                       "seed": seed, "out": str(out)}
             # Cloning models fail stochastically (invalid sampled tokens, crashes):
             # restart the worker and retry, since sampling differs each attempt.
             for attempt in range(1, self.MAX_ATTEMPTS + 1):
@@ -147,7 +148,70 @@ def release_engines() -> None:
 
 
 def synthesize(text: str, voice: str, target_language: str, emotion=None, reference=None,
-               duration=None, engine_name: str | None = None) -> tuple[np.ndarray, int]:
+               duration=None, seed=None, engine_name: str | None = None) -> tuple[np.ndarray, int]:
     """Convenience: returns (audio, sample_rate)."""
     engine = get_engine(target_language, engine_name)
-    return engine.synthesize(text, voice, emotion=emotion, reference=reference, duration=duration), engine.sample_rate
+    return engine.synthesize(text, voice, emotion=emotion, reference=reference, duration=duration,
+                             seed=seed), engine.sample_rate
+
+
+# --- Per-segment synthesis: stock vs. cloned voice, with sanity-checked retries ---
+
+CLONE_VOICE = "clone"     # a segment/speaker voice of "clone" means: clone the original speaker
+MAX_TAKES = 3             # cloned takes tried per line before keeping the best one
+
+
+def clone_engine_name() -> str:
+    config = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
+    return config["models"]["tts"].get("clone_engine", "omnivoice")
+
+
+MIN_CAP_SECONDS = 3.0     # even one-word lines may take this long (the model's own minimum is ~2.2s)
+
+
+def duration_bounds(text: str, words_per_second: float) -> tuple[float, float]:
+    """(shortest, longest) plausible length in seconds for this text. Cloned
+    takes can come out near-empty (seen: 0.12s for a sentence) or runaway
+    (seen: ~12s for seven words, identical across seeds), so the longest is
+    also handed to the engine as a hard cap. Bounds are deliberately wide."""
+    expected = max(1, len(text.split())) / words_per_second
+    return 0.3 * expected - 0.1, max(2.5 * expected + 1.0, MIN_CAP_SECONDS)
+
+
+def synthesize_segment(seg: dict, text: str, target_language: str, duration=None) -> tuple[np.ndarray, int]:
+    """Synthesizes `text` for a segment with its voice: a Kokoro-style stock
+    voice, or (voice == "clone") the clone engine using seg["reference"].
+    Cloned takes are re-rolled with a new seed if they look glitched, and the
+    seed that was kept is stored in seg["seed"]. Returns (audio, sample_rate)."""
+    reference = seg.get("reference")
+    reference = str(ROOT_DIR / reference) if reference else None
+
+    if seg.get("voice") != CLONE_VOICE:
+        engine = get_engine(target_language)
+        audio = engine.synthesize(text, seg["voice"], emotion=seg.get("emotion"),
+                                  reference=reference, duration=duration)
+        return audio, engine.sample_rate
+
+    if not reference:
+        raise ValueError(f"segment {seg.get('id')} uses a cloned voice but has no reference clip")
+    config = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
+    words_per_second = config["languages"]["target"][target_language]["words_per_second"]
+    engine = get_engine(target_language, clone_engine_name())
+
+    shortest, longest = duration_bounds(text, words_per_second)
+    hint = min(duration, longest) if duration else longest   # slot, but never beyond a plausible length
+    base_seed = seg.get("seed_base", seg["id"] * 100)
+    best = None
+    for take in range(MAX_TAKES):
+        seed = base_seed + take
+        audio = engine.synthesize(text, seg["voice"], emotion=seg.get("emotion"), reference=reference,
+                                  duration=hint, seed=seed)
+        seconds = len(audio) / engine.sample_rate
+        ok = shortest <= seconds <= longest * 1.1
+        if best is None or ok:
+            best = (audio, seed)
+        if ok:
+            break
+        print(f"  id={seg.get('id')}: take {take + 1} looks glitched ({seconds:.2f}s for {text!r}); retrying", flush=True)
+    seg["seed"] = best[1]
+    return best[0], engine.sample_rate

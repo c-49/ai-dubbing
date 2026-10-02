@@ -47,7 +47,7 @@ class IndexTTSEngine:
         self.sample_rate = sr
         return (np.asarray(wav, dtype=np.float32) / 32768.0).reshape(-1)
 
-    def synthesize(self, text, voice, emotion=None, reference=None, duration=None) -> np.ndarray:
+    def synthesize(self, text, voice, emotion=None, reference=None, duration=None, seed=None) -> np.ndarray:
         if reference is None:
             raise ValueError("IndexTTS needs a reference clip (it only clones)")
         audio = self._infer(text, reference, emotion)

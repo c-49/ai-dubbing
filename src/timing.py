@@ -76,7 +76,7 @@ def slot_seconds(segments: list[dict], i: int) -> float | None:
 
 def fit_segment(
     episode_dir: Path, segments: list[dict], i: int, max_speedup: float,
-    ollama_model: str, ollama_host: str, engine,
+    ollama_model: str, ollama_host: str, target_language: str,
     source_name: str = "Korean", target_name: str = "English", words_per_second: float = 2.3,
     allow_auto_shorten: bool = True,
 ) -> None:
@@ -114,14 +114,20 @@ def fit_segment(
             print(f"  id={seg['id']}: sped up {needed_factor:.2f}x to fit {available:.2f}s slot")
             return
 
+        cloned = seg.get("voice") == tts_engine.CLONE_VOICE
+        if cloned:
+            # Ollama (~4GB) and a cloning model together overflow a 6GB card,
+            # which silently spills to system RAM and runs several times slower.
+            tts_engine.release_engines()
         shorter = ask_shorter_translation(
             seg["source_text"], seg["target_text"], max(1, round(available * words_per_second)),
             source_name, target_name, ollama_model, ollama_host,
         ) if allow_auto_shorten else None
+        if cloned:
+            hardware.unload_ollama(ollama_model, ollama_host)
         if shorter:
-            audio = engine.synthesize(shorter, seg["voice"], emotion=seg.get("emotion"), reference=seg.get("reference"),
-                                      duration=available)
-            sf.write(clip_path, audio, engine.sample_rate)
+            audio, sample_rate = tts_engine.synthesize_segment(seg, shorter, target_language, duration=available)
+            sf.write(clip_path, audio, sample_rate)
             seg["target_text"] = shorter
             # A compressed re-translation isn't always natural English (caught
             # one that read as broken, e.g. "Thirds out, dangerous.") -- flag
@@ -157,7 +163,6 @@ def fit_timing(episode_dir: Path, source_language: str = "ko", target_language: 
     target_name = target_cfg["name"]
     words_per_second = target_cfg["words_per_second"]
 
-    engine = tts_engine.get_engine(target_language)
 
     todo = [i for i, s in enumerate(segments) if not s.get("timing_fit")]
     if len(todo) < len(segments):
@@ -165,7 +170,7 @@ def fit_timing(episode_dir: Path, source_language: str = "ko", target_language: 
 
     for n, i in enumerate(todo):
         fit_segment(
-            episode_dir, segments, i, max_speedup, ollama_cfg["model"], ollama_cfg["host"], engine,
+            episode_dir, segments, i, max_speedup, ollama_cfg["model"], ollama_cfg["host"], target_language,
             source_name, target_name, words_per_second,
         )
         if (n + 1) % 20 == 0 or n + 1 == len(todo):

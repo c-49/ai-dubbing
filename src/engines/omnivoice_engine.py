@@ -3,7 +3,10 @@
 Runs in its own venv as a worker (see config.yaml). `reference` is the path
 of the speaker's reference clip; its transcript is auto-detected by the
 model's built-in ASR (cached per reference, so only the first line per
-speaker pays for it). Settings: speed (1.0 = model's estimate), num_step.
+speaker pays for it). Settings: speed (1.0 = model's estimate), num_step,
+guidance_scale, and instruct (a dict by target language, e.g.
+{en: "american accent"}: the model's voice-design tags, used to lessen the
+reference language's accent; only English has accent tags).
 """
 import numpy as np
 
@@ -19,6 +22,8 @@ class OmniVoiceEngine:
         self._language = target_cfg["code"]
         self._speed = settings.get("speed")
         self._num_step = settings.get("num_step")
+        self._guidance = settings.get("guidance_scale")
+        self._instruct = (settings.get("instruct") or {}).get(self._language)
         device = hardware.resolve_device(settings.get("device", "auto"))
         dtype = torch.float16 if device == "cuda" else torch.float32
         self._model = OmniVoice.from_pretrained(
@@ -26,12 +31,19 @@ class OmniVoiceEngine:
         self.sample_rate = self._model.sampling_rate
         self._prompts: dict[str, object] = {}
 
-    def synthesize(self, text, voice, emotion=None, reference=None, duration=None) -> np.ndarray:
+    def synthesize(self, text, voice, emotion=None, reference=None, duration=None, seed=None) -> np.ndarray:
         kwargs = {}
         if self._speed:
             kwargs["speed"] = self._speed
         if self._num_step:
             kwargs["num_step"] = self._num_step
+        if self._guidance:
+            kwargs["guidance_scale"] = self._guidance
+        if self._instruct:
+            kwargs["instruct"] = self._instruct
+        if seed is not None:
+            import torch
+            torch.manual_seed(seed)
         if reference:
             reference = str(reference)
             if reference not in self._prompts:

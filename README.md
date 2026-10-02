@@ -167,6 +167,38 @@ mid-transcription.
 Open the review page (see above) to listen through flagged lines, fix
 translations, and adjust voices, then hit "Re-run mix" when you're happy.
 
+## Voice cloning (OmniVoice)
+
+Besides the stock Kokoro voices, each speaker can be dubbed with a clone of
+their own original voice (Korean/Japanese reference -> English/Spanish
+output), so characters sound consistent and Spanish is no longer limited to
+3 voices.
+
+- In the review page, pick **Clone original voice** in a speaker's voice
+  dropdown (or in `shows/<show>/voices.json`, set the speaker to `"clone"`).
+  The speaker card then shows a **reference clip** picker: "auto" joins that
+  speaker's cleanest lines (~15s); you can instead pick one of their sample
+  clips (avoid a shouting/crying clip) and audition it with "play reference".
+  A clip you pick is saved to `shows/<show>/references/<speaker>.wav` and used
+  for every episode of that show.
+- Each line has a **Redo** button: cloned takes vary, so re-roll one that
+  sounds off. Takes that look glitched (far too short/long for the text) are
+  re-rolled automatically, and the seed used is saved in `segments.json`.
+- The clone engine (`models.tts.clone_engine` in `config.yaml`) runs as its
+  own worker process in `.venv-engines/omnivoice` and exits when done, so it
+  never shares the 6GB GPU with Ollama. Cloning a 25-line clip takes ~4 min
+  (about 10s per line); stock Kokoro voices stay much faster.
+- Accent: cloning from a Korean voice tends to leave a slight accent. A
+  listening test picked `guidance_scale: 1.0` (the model default of 2.0
+  pulls harder toward the reference accent); change it under
+  `models.tts.engines.omnivoice.settings`.
+- Cloned and stock speakers can be mixed in one episode.
+
+Setting up the engine on a new machine: `uv venv .venv-engines/omnivoice
+--python 3.11`, install torch 2.8.0 (CUDA build from
+https://download.pytorch.org/whl/cu126), then `omnivoice soundfile pyyaml
+numpy`. (M6's setup script will automate this.)
+
 ## Notes on this setup
 
 - Runs on an NVIDIA GPU when the CUDA environment is installed (`uv sync --extra cuda`),

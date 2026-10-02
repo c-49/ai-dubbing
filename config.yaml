@@ -63,6 +63,7 @@ models:
     model: qwen2.5:7b     # better Korean handling than llama3; pulled during Milestone 0
     host: http://localhost:11434
   tts:
+    clone_engine: omnivoice   # engine for speakers set to the "clone" voice (see src/tts_engine.py)
     engine: kokoro    # default_voice is now per-target-language, under languages.target.<code>
     # Registry for src/tts_engine.py. Add `worker: {python: <venv python>}` to
     # run an engine in its own venv as a subprocess (frees VRAM when it exits).
@@ -84,6 +85,11 @@ models:
         class: "engines.omnivoice_engine:OmniVoiceEngine"
         worker:
           python: .venv-engines/omnivoice/Scripts/python.exe
+        settings:
+          # Listening test (en + es): guidance 1.0 sounded least accented while still
+          # like the original speaker; the default 2.0 pulls harder toward the reference's
+          # (Korean) accent. Other knobs: speed, num_step, instruct (English accent tags).
+          guidance_scale: 1.0
       indextts:         # voice cloning candidate (M4 bake-off); env in third_party/index-tts
         class: "engines.indextts_engine:IndexTTSEngine"
         worker:

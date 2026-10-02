@@ -126,7 +126,7 @@ def run(episode_dir: Path) -> None:
         ("transcribe (faster-whisper)", transcribe.transcribe, (episode_dir, glossary_terms, source_language)),
         ("diarize (pyannote)", diarize.diarize, (episode_dir,)),
         ("translate (Ollama)", translate.translate, (episode_dir, glossary_path, source_language, target_language)),
-        ("TTS (Kokoro)", tts.synthesize, (episode_dir, voices_path, target_language)),
+        ("TTS", tts.synthesize, (episode_dir, voices_path, target_language)),
         ("timing fit", timing.fit_timing, (episode_dir, source_language, target_language)),
         ("mix + export", mix.mix, (episode_dir, source_language, target_language)),
     ]

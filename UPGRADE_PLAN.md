@@ -113,7 +113,7 @@ place that builds engines. Milestone numbers are kept for reference only.
   (same output on the test clip) and a stub second engine can be selected by
   config without changing any caller.
 
-### M4: Voice cloning
+### M4: Voice cloning  (DONE: OmniVoice; see "M4 bake-off findings" below)
 - **Research and bake-off first.** Check current candidates (e.g. XTTS-v2 via
   the maintained `coqui-tts` fork, Chatterbox multilingual, CosyVoice 2,
   IndexTTS2) for: license, Korean/Japanese reference tolerance,
@@ -243,3 +243,21 @@ subprocess-worker interface.
   them, but Chatterbox Spanish is not dependable on this setup.
 - English tests for both are in `work/vincenzo/bakeoff_*_en/dubbed.mp4`;
   Spanish for OmniVoice in `work/vincenzo-es/bakeoff_omnivoice_es/dubbed.mp4`.
+
+### M4 outcome
+- **Chosen engine: OmniVoice** (user's call after listening). Accent
+  mitigation by ear: `guidance_scale: 1.0` for both English and Spanish
+  (variants tested in `work/accent_test/`; the "american accent" tag was
+  tested for English too and not preferred).
+- Built: per-speaker reference clips (`src/references.py`; auto-built per
+  episode, optional per-show override in `shows/<show>/references/`), "clone"
+  voice routing (`tts_engine.synthesize_segment`), glitch detection with a
+  hard length cap handed to the engine plus seed re-rolls, a worker proxy that
+  restarts and retries crashed workers, and review UI support (clone option,
+  reference picker/audition, per-line Redo).
+- Verified end to end on the test clips: English (25 lines, 352s total run)
+  and Spanish (33 lines, 271s), cloned voices for every speaker, all lines fit
+  (one 0.7s slot too short for any voice).
+- Known limits: cloning costs ~10s per line (vs. ~1s for Kokoro); clone and
+  Ollama are kept off the GPU together because they overflow 6GB; the
+  engine-level `emotion` hint is not yet used (M5).
