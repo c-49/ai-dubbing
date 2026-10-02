@@ -5,7 +5,7 @@ Take a Korean drama episode (mp4, 30-60 min, no subtitles) and produce an mp4 wi
 
 ## Hard constraints
 - **Everything must be free.** No paid APIs, no paid services. Do not add a dependency that requires payment or a credit card.
-- **Windows 11, 16GB RAM, AMD GPU (no NVIDIA/CUDA).** Target CPU. Long runtimes (hours per episode) are acceptable.
+- **Windows 11, 16GB RAM, NVIDIA RTX 4050 Laptop GPU (6GB VRAM, driver 551.76; confirmed with nvidia-smi).** Originally built CPU-only; CUDA support is planned in UPGRADE_PLAN.md, and the CPU path must keep working. Long runtimes (hours per episode) are acceptable.
 - **User is comfortable with Python but not an expert.** Explain setup steps, keep code readable, avoid clever abstractions.
 - Work one milestone at a time. Stop after each milestone, show what was built, and let the user test before moving on.
 
