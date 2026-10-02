@@ -52,16 +52,29 @@ class WorkerEngine:
     it over a line-based JSON protocol on stdin/stdout, passing audio through
     temporary wav files."""
 
+    MAX_ATTEMPTS = 3
+
     def __init__(self, name: str, language: str, python: str):
         self._lock = threading.Lock()
-        python_path = Path(python)
-        if not python_path.is_absolute():
-            python_path = ROOT_DIR / python_path
+        self._python_path = Path(python)
+        if not self._python_path.is_absolute():
+            self._python_path = ROOT_DIR / self._python_path
+        self._name, self._language = name, language
+        self._start()
+
+    def _start(self) -> None:
         self._proc = subprocess.Popen(
-            [str(python_path), str(WORKER_SCRIPT), name, language],
+            [str(self._python_path), str(WORKER_SCRIPT), self._name, self._language],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="utf-8",
         )
         self.sample_rate = self._read_reply()["sample_rate"]
+
+    def _restart(self) -> None:
+        # A CUDA error inside the worker poisons its whole context, so a retry
+        # needs a fresh process, not just another request.
+        self._proc.kill()
+        self._proc.wait()
+        self._start()
 
     def _read_reply(self) -> dict:
         line = self._proc.stdout.readline()
@@ -78,9 +91,20 @@ class WorkerEngine:
             request = {"text": text, "voice": voice, "emotion": emotion,
                        "reference": str(reference) if reference else None, "duration": duration,
                        "out": str(out)}
-            self._proc.stdin.write(json.dumps(request) + "\n")
-            self._proc.stdin.flush()
-            self._read_reply()
+            # Cloning models fail stochastically (invalid sampled tokens, crashes):
+            # restart the worker and retry, since sampling differs each attempt.
+            for attempt in range(1, self.MAX_ATTEMPTS + 1):
+                try:
+                    self._proc.stdin.write(json.dumps(request) + "\n")
+                    self._proc.stdin.flush()
+                    self._read_reply()
+                    break
+                except (RuntimeError, OSError) as e:
+                    if attempt == self.MAX_ATTEMPTS:
+                        raise
+                    print(f"  TTS worker failed ({e}); restarting and retrying "
+                          f"({attempt}/{self.MAX_ATTEMPTS - 1})", flush=True)
+                    self._restart()
             audio, _ = sf.read(out, dtype="float32")
             return audio
 

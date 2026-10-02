@@ -234,3 +234,12 @@ subprocess-worker interface.
   free helper models; always compare timings against VRAM peak.
 - The engine interface gained `duration=None` (slot seconds) so engines with
   duration control can fit the line themselves.
+- **Spanish results:** OmniVoice dubbed all 33 lines of the Spanish test
+  episode cleanly (284s synthesis, every line fit, max 1.13x speed-up).
+  Chatterbox hit repeated `CUDA device-side assert` crashes on Spanish (about
+  3 in ~21 lines; one line failed 3 consecutive attempts, aborting the run)
+  and produced runaway takes (11.5s for a 5-word line). The worker proxy now
+  restarts the process and retries (up to 3 attempts), which recovered some of
+  them, but Chatterbox Spanish is not dependable on this setup.
+- English tests for both are in `work/vincenzo/bakeoff_*_en/dubbed.mp4`;
+  Spanish for OmniVoice in `work/vincenzo-es/bakeoff_omnivoice_es/dubbed.mp4`.
