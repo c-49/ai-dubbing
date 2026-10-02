@@ -191,3 +191,25 @@ place that builds engines. Milestone numbers are kept for reference only.
 - Licensing re-check for every new model, even for personal use.
 - Machines without NVIDIA: confirm the CPU build and the Kokoro-only path
   stay supported on a clean install.
+
+## M4 research notes (verified Oct 2026 against project repos)
+
+Constraints applied: free, personal use, fits a 6GB card (alone on the GPU),
+Korean/Japanese reference -> English/Spanish output.
+
+| Model | Size / VRAM | License | Strengths | Concerns |
+|---|---|---|---|---|
+| **Chatterbox Multilingual** (Resemble AI) | 500M; ~3.5GB | MIT | 23 languages incl. ko/ja/es/en; `exaggeration` + `cfg_weight` emotion knobs; simple pip install | Docs warn the output inherits the reference's accent (mitigate with `cfg_weight=0`); no duration control; no emotion-from-audio; watermarks output (Perth) |
+| **OmniVoice** (k2-fsa) | 0.6B; fast (RTF ~0.025) | Apache-2.0 per GitHub, CC-BY-NC per HF card (fine for personal use either way) | 600+ languages; explicit `duration` and `speed` control (ideal for timing fit); non-verbal tags, whisper style | Docs also warn of reference-language accent; emotion control is limited |
+| **IndexTTS-2.5** (bilibili) | ~6GB reported, tight | Custom bilibili license (ok for personal use) | Emotion from a separate reference audio or 8-float emotion vector (best fit for M5); `duration_factor` | Tightest on VRAM; Korean not listed as a supported language (English/Spanish/Japanese are, output side is what matters); heavier Windows install (DeepSpeed optional) |
+
+Considered and dropped: VoxCPM2 (needs ~8GB), XTTS-v2 (older, non-commercial
+CPML license, weaker than the above; kept as a fallback if all three fail),
+Fish Speech (CC-BY-NC weights, no clear advantage here).
+
+Bake-off plan: for each of the three, build a per-speaker reference from the
+test clip's separated vocals (`speaker_samples/`), dub the same 25 English
+lines (plus a Spanish sample), run them through the normal timing-fit + mix,
+and compare the resulting `dubbed.mp4` files by ear against Kokoro. Each
+candidate gets its own venv under `.venv-engines/`, run through the M3
+subprocess-worker interface.
