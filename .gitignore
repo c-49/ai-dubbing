@@ -9,3 +9,4 @@ bin/
 models/
 .venv/
 .venv-cuda/
+.venv-engines/

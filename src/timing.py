@@ -111,7 +111,7 @@ def fit_segment(
             source_name, target_name, ollama_model, ollama_host,
         ) if allow_auto_shorten else None
         if shorter:
-            audio = engine.synthesize(shorter, seg["voice"], emotion=seg.get("emotion"))
+            audio = engine.synthesize(shorter, seg["voice"], emotion=seg.get("emotion"), reference=seg.get("reference"))
             sf.write(clip_path, audio, engine.sample_rate)
             seg["target_text"] = shorter
             # A compressed re-translation isn't always natural English (caught

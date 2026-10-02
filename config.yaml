@@ -73,6 +73,17 @@ models:
           device: auto
       stub:             # test engine: sine tones, for exercising the abstraction
         class: "engines.stub_engine:StubEngine"
+      chatterbox:       # voice cloning candidate (M4 bake-off); own venv
+        class: "engines.chatterbox_engine:ChatterboxEngine"
+        worker:
+          python: .venv-engines/chatterbox/Scripts/python.exe
+        settings:
+          exaggeration: 0.5
+          cfg_weight: 0.0     # 0 reduces accent bleed from a foreign-language reference
+      omnivoice:        # voice cloning candidate (M4 bake-off); own venv
+        class: "engines.omnivoice_engine:OmniVoiceEngine"
+        worker:
+          python: .venv-engines/omnivoice/Scripts/python.exe
       stub_worker:      # same stub, run as a subprocess worker (tests that path)
         class: "engines.stub_engine:StubEngine"
         worker:

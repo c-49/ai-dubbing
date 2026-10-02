@@ -28,7 +28,7 @@ def main() -> None:
     config = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
     engine_cfg = config["models"]["tts"]["engines"][name]
     cls = load_engine_class(engine_cfg["class"])
-    engine = cls(config["languages"]["target"][language], engine_cfg.get("settings") or {})
+    engine = cls({**config["languages"]["target"][language], "code": language}, engine_cfg.get("settings") or {})
     reply(ok=True, sample_rate=engine.sample_rate)
 
     for line in sys.stdin:

@@ -48,7 +48,7 @@ def synthesize(episode_dir: Path, voices_path: Path | None = None, target_langua
 
     for n, seg in enumerate(todo):
         voice = speaker_voices.get(seg.get("speaker"), default_voice)
-        audio = engine.synthesize(seg["target_text"], voice, emotion=seg.get("emotion"))
+        audio = engine.synthesize(seg["target_text"], voice, emotion=seg.get("emotion"), reference=seg.get("reference"))
         out_path = tts_dir / f"{seg['id']:04d}.wav"
         sf.write(out_path, audio, engine.sample_rate)
         seg["voice"] = voice

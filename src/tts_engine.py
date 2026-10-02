@@ -4,7 +4,7 @@ config (models.tts.engine) without touching any caller.
 
 An engine is a class with:
     sample_rate: int
-    __init__(target_cfg: dict, settings: dict)   # languages.target.<code>, models.tts.engines.<name>.settings
+    __init__(target_cfg: dict, settings: dict)   # languages.target.<code> (+ "code"), models.tts.engines.<name>.settings
     synthesize(text, voice, emotion=None, reference=None) -> np.ndarray (mono float32)
     close() -> None                               # free VRAM/RAM
 
@@ -20,6 +20,7 @@ engines with conflicting dependencies are isolated and VRAM is freed cleanly.
 """
 import importlib
 import json
+import os
 import subprocess
 import tempfile
 import threading
@@ -94,7 +95,8 @@ def get_engine(target_language: str, engine_name: str | None = None):
     defaults to config.yaml's models.tts.engine."""
     config = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
     tts_cfg = config["models"]["tts"]
-    name = engine_name or tts_cfg["engine"]
+    # DUBBER_TTS_ENGINE overrides config.yaml (used by the bake-off script).
+    name = engine_name or os.environ.get("DUBBER_TTS_ENGINE") or tts_cfg["engine"]
     key = (name, target_language)
     with _lock:
         if key not in _engines:
@@ -104,7 +106,7 @@ def get_engine(target_language: str, engine_name: str | None = None):
                 _engines[key] = WorkerEngine(name, target_language, worker["python"])
             else:
                 cls = load_engine_class(engine_cfg["class"])
-                target_cfg = config["languages"]["target"][target_language]
+                target_cfg = {**config["languages"]["target"][target_language], "code": target_language}
                 _engines[key] = cls(target_cfg, engine_cfg.get("settings") or {})
         return _engines[key]
 
