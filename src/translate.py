@@ -15,6 +15,7 @@ from pathlib import Path
 
 import yaml
 
+import hardware
 import pathfix  # noqa: F401
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
@@ -175,6 +176,8 @@ def translate(
             seg["target_text"] = translations[seg["id"]]
         segments_path.write_text(json.dumps(segments, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    # Don't let Ollama keep its model resident (VRAM) through the next stages.
+    hardware.unload_ollama(ollama_cfg["model"], ollama_cfg["host"])
     return segments
 
 

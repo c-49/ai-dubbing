@@ -119,20 +119,31 @@ the parent folder, so `work/vincenzo/ep5/` means show "vincenzo", episode "ep5".
 
 ### How long this takes
 
-Measured on this machine (CPU-only) for the 3-minute, 25-line test clip,
-running the whole pipeline from scratch via `run_episode.py`:
+Measured on this machine (RTX 4050 Laptop, 6GB) for the 3-minute, 25-line
+test clip, running the whole pipeline from scratch via `run_episode.py`.
+The CPU column is a re-run on the current code/environment (`.venv`); the
+original first-ever CPU measurement was 341s total, so expect some
+run-to-run and machine-load variation (+/- 30%):
 
-| Stage | Time | Rate |
+| Stage | GPU (`.venv-cuda`) | CPU (`.venv`) |
 |---|---|---|
-| extract | 1s | - |
-| separate (Demucs) | 82s | 0.45x real time |
-| transcribe (faster-whisper large-v3) | 68s | 0.37x real time |
-| diarize (pyannote) | 117s | 0.64x real time |
-| translate (Ollama, 1 chunk) | 35s | - |
-| TTS (Kokoro, 25 lines) | 26s | - |
-| timing fit | 2s | - |
-| mix + export | 10s | - |
-| **total** | **341s** | **1.85x real time** |
+| extract | 1s | 0s |
+| separate (Demucs) | 22s | 91s |
+| transcribe (faster-whisper large-v3) | 33s | 84s |
+| diarize (pyannote) | 26s | 169s |
+| translate (Ollama, 1 chunk) | 45s | 37s |
+| TTS (Kokoro, 25 lines) | 33s | 43s |
+| timing fit | 17s | 18s |
+| mix + export | 12s | 12s |
+| **total** | **188s (1.0x real time)** | **456s (2.5x real time)** |
+
+Peak VRAM on the GPU run was about 5.0 GB of 6 GB (Ollama is the biggest
+single consumer, ~4.2 GB; each stage frees its model before the next one
+loads). Ollama, TTS and the pipeline's other stages use the GPU
+automatically when available. Set `device: cpu` per model in `config.yaml`,
+or set the environment variable `DUBBER_DEVICE=cpu`, to force CPU.
+GPU and CPU runs transcribe slightly differently (float16 vs int8), so the
+flagged-line count can differ between them.
 
 Scaling that up linearly to a full ~60 minute episode (and assuming similar
 dialogue density, so roughly 20x as many segments too) suggests somewhere
@@ -158,8 +169,7 @@ translations, and adjust voices, then hit "Re-run mix" when you're happy.
 
 ## Notes on this setup
 
-- Target is CPU-only (per hardware constraints), even though this machine also
-  has an NVIDIA RTX 4050 -- CUDA was intentionally skipped to keep things simple
-  and match the original plan.
+- Runs on an NVIDIA GPU when the CUDA environment is installed (`uv sync --extra cuda`),
+  and on CPU otherwise (`uv sync --extra cpu`) -- same code either way.
 - Dependencies are declared in `pyproject.toml` and pinned in `uv.lock`. Recreate the environment with `uv sync --extra cpu` (or `--extra cuda`). The old `requirements.txt`/`venv/` are legacy and can be deleted once you are happy with `.venv/`.
 - The project is self-contained: ffmpeg and eSpeak NG live in `bin/`, downloaded models in `models/` (the Hugging Face token stays per-user in `~/.cache/huggingface/token`).

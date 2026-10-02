@@ -2,6 +2,7 @@
 import numpy as np
 from kokoro import KPipeline
 
+import hardware
 import pathfix  # noqa: F401
 
 
@@ -9,7 +10,8 @@ class KokoroEngine:
     sample_rate = 24000
 
     def __init__(self, target_cfg: dict, settings: dict):
-        self._pipeline = KPipeline(lang_code=target_cfg["kokoro_lang_code"])
+        device = hardware.resolve_device(settings.get("device", "auto"))
+        self._pipeline = KPipeline(lang_code=target_cfg["kokoro_lang_code"], device=device)
 
     def synthesize(self, text, voice, emotion=None, reference=None) -> np.ndarray:
         chunks = [np.asarray(audio) for _, _, audio in self._pipeline(text, voice=voice)]
@@ -17,3 +19,4 @@ class KokoroEngine:
 
     def close(self) -> None:
         self._pipeline = None
+        hardware.release_gpu()

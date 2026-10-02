@@ -8,3 +8,4 @@ shows/*/incoming/*
 bin/
 models/
 .venv/
+.venv-cuda/

@@ -37,6 +37,7 @@ import translate
 import tts
 import timing
 import mix
+import tts_engine
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 SHOWS_DIR = ROOT_DIR / "shows"
@@ -152,6 +153,7 @@ def run(episode_dir: Path) -> None:
             _update_status(episode_dir, status="failed", error=str(e) or type(e).__name__)
             raise
         finally:
+            tts_engine.release_engines()  # free VRAM/RAM held by the TTS engine
             _release_lock()
     finally:
         logger.close()

@@ -14,6 +14,7 @@ import torchaudio.functional as taf
 import yaml
 from pyannote.audio import Pipeline
 
+import hardware
 import pathfix  # noqa: F401
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
@@ -97,6 +98,9 @@ def diarize(episode_dir: Path) -> tuple[list[dict], dict]:
 
     config = yaml.safe_load(CONFIG_PATH.read_text())["models"]["pyannote"]
     pipeline = Pipeline.from_pretrained(config["pipeline"], token=load_token())
+    device = hardware.resolve_device(config.get("device", "auto"))
+    print(f"  pyannote: {device}")
+    pipeline.to(torch.device(device))
 
     # Load the audio ourselves and hand pyannote a waveform tensor directly,
     # bypassing its torchcodec-based file decoder (buggy on this Windows/CPU
@@ -108,6 +112,8 @@ def diarize(episode_dir: Path) -> tuple[list[dict], dict]:
         {"start": turn.start, "end": turn.end, "speaker": speaker}
         for turn, _, speaker in result.speaker_diarization.itertracks(yield_label=True)
     ]
+    del pipeline, result
+    hardware.release_gpu()
     turns = merge_same_speaker_turns(turns)
 
     for seg in segments:

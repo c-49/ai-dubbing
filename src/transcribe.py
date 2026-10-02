@@ -22,6 +22,7 @@ import soundfile as sf
 import yaml
 from faster_whisper import WhisperModel
 
+import hardware
 import pathfix  # noqa: F401
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
@@ -52,7 +53,10 @@ def transcribe(
 
     full_config = yaml.safe_load(CONFIG_PATH.read_text())
     config = full_config["models"]["whisper"]
-    model = WhisperModel(config["size"], device=config["device"], compute_type=config["compute_type"])
+    device = hardware.resolve_device(config.get("device", "auto"))
+    compute_type = hardware.resolve_compute_type(device, config.get("compute_type", "auto"))
+    print(f"  whisper: {device} ({compute_type})")
+    model = WhisperModel(config["size"], device=device, compute_type=compute_type)
 
     source_languages = full_config["languages"]["source"]
     if source_language not in source_languages:
@@ -111,6 +115,8 @@ def transcribe(
     if trimmed_path:
         trimmed_path.unlink()
     done_marker.write_text("")
+    del model
+    hardware.release_gpu()
     return records
 
 

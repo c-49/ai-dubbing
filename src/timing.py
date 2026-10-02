@@ -24,6 +24,7 @@ import soundfile as sf
 import yaml
 import tts_engine
 
+import hardware
 import pathfix  # noqa: F401
 from translate import call_ollama
 
@@ -162,6 +163,7 @@ def fit_timing(episode_dir: Path, source_language: str = "ko", target_language: 
             print(f"  timing fit: {n + 1}/{len(todo)}")
         segments_path.write_text(json.dumps(segments, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    hardware.unload_ollama(ollama_cfg["model"], ollama_cfg["host"])
     return segments
 
 

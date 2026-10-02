@@ -46,8 +46,8 @@ languages:
 models:
   whisper:
     size: large-v3       # used from Milestone 1 onward; downloads ~3GB on first real use
-    device: cpu
-    compute_type: int8
+    device: auto         # auto = CUDA if available else CPU; or force cpu / cuda
+    compute_type: auto   # auto = float16 on GPU, int8 on CPU
     vad:
       threshold: 0.4            # lower than faster-whisper's 0.5 default, to catch quieter/mumbled lines
       min_silence_duration_ms: 500   # default 2000; shorter so nearby lines don't get merged into one blob
@@ -55,10 +55,10 @@ models:
       speech_pad_ms: 200
   demucs:
     model: htdemucs
-    device: cpu
+    device: auto
   pyannote:
     pipeline: pyannote/speaker-diarization-3.1
-    device: cpu
+    device: auto
   ollama:
     model: qwen2.5:7b     # better Korean handling than llama3; pulled during Milestone 0
     host: http://localhost:11434
@@ -69,6 +69,8 @@ models:
     engines:
       kokoro:
         class: "engines.kokoro_engine:KokoroEngine"
+        settings:
+          device: auto
       stub:             # test engine: sine tones, for exercising the abstraction
         class: "engines.stub_engine:StubEngine"
       stub_worker:      # same stub, run as a subprocess worker (tests that path)
