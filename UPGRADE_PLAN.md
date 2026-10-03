@@ -155,7 +155,7 @@ place that builds engines. Milestone numbers are kept for reference only.
   crying) sounds audibly different in the dub, judged by ear, with no
   regression in timing fit.
 
-### M6: Launcher, installer, updater
+### M6: Launcher, installer, updater  (DONE except the optional offline bundle and exe wrapper)
 - `setup.bat` (or `setup.ps1`): installs `uv`, creates the environment from
   the lockfile, picking the CUDA or CPU torch build based on detected
   hardware, creates extra venvs for subprocess engines, and installs Ollama
@@ -261,3 +261,26 @@ subprocess-worker interface.
 - Known limits: cloning costs ~10s per line (vs. ~1s for Kokoro); clone and
   Ollama are kept off the GPU together because they overflow 6GB; the
   engine-level `emotion` hint is not yet used (M5).
+
+### M6 outcome
+- Added `setup.bat`/`setup.ps1`, `Dubber.bat`/`Dubber.ps1`, `update.bat`/`update.ps1`
+  (see README "Quick start"). `.dubber-env.json` records the torch build chosen
+  on each machine (git-ignored).
+- Verified in a copy of the project placed at a different path with no
+  environments, no `bin/`, no `models/`, no `work/`: `setup.ps1` rebuilt
+  everything (CUDA torch auto-detected, bundled ffmpeg/eSpeak, the cloning
+  environment, models re-downloaded into the copy) and `check_setup.py` passed
+  all six checks; `Dubber.bat` served the review app (HTTP 200); a cloned-voice
+  line synthesized from the copy's own cloning environment; `update.ps1`
+  re-synced and left `models/`, `work/` and `shows/` data untouched; on a git
+  checkout with no upstream it refused cleanly and changed nothing.
+- Found and fixed while testing: under Windows PowerShell 5.1 a native command
+  writing to stderr is a terminating error when `$ErrorActionPreference =
+  "Stop"`, so install probes go through a `Succeeds` helper.
+- Not done (optional in the plan): an offline bundle for machines without
+  internet (virtualenvs hold absolute paths, so it would need a wheel cache),
+  and wrapping `Dubber.bat` in an exe.
+- Not verified: a truly clean Windows machine/user (this machine already had
+  winget packages for ffmpeg, eSpeak and Ollama, so those install paths were
+  exercised only as "already present"; the winget install fallbacks are
+  untested), and a fresh Hugging Face token prompt (a token already existed).

@@ -3,7 +3,34 @@
 See `PLAN.md` for the full project plan. This file only covers day-to-day setup
 and running instructions, updated as milestones land.
 
-## Setup (Milestone 0)
+## Quick start (any Windows 10/11 machine)
+
+1. Copy this folder to the machine (anywhere; no need to keep the same path).
+   You do **not** need to copy `.venv*`, `bin/` or `work/`; `models/` is
+   optional (copy it to skip re-downloading ~5GB of models).
+2. Double-click **`setup.bat`**. It installs what is missing: `uv` (which
+   fetches Python itself), the Python packages (CUDA build of torch if an
+   NVIDIA GPU is detected, else CPU), ffmpeg and eSpeak NG (bundled into
+   `bin/`), the voice-cloning engine's own environment, Ollama and the
+   translation model. It asks once for your Hugging Face token (steps are
+   printed; see below) and finishes by running `src/check_setup.py`.
+   Options: `-Cpu` (force CPU), `-NoClone`, `-SkipOllama`. It is safe to
+   re-run if anything fails part-way.
+3. Double-click **`Dubber.bat`** any time to start the review app. It
+   re-syncs the environment if the code was updated, starts Ollama if needed,
+   starts the server and opens the browser. (Run it first and it will run
+   setup for you.)
+4. **`update.bat`** pulls new code (git checkout) and re-syncs the
+   environment. If you got the project as a zip, copy the new files over the
+   old ones (keep `models/`, `shows/`, `work/`) and run `update.bat`.
+   Code, environments, models and your data are separate, so updating never
+   touches `models/`, `shows/` or `work/`.
+
+Needs: Windows with `winget` (built into Windows 11 / current Windows 10),
+internet for the first setup, and ~25GB free disk. Verified by copying the
+project to a new path without any environment and running setup from scratch.
+
+## Setup details (Milestone 0 -- historical, `setup.bat` now does all of this)
 
 Already done by the assistant on this machine:
 - Python 3.11 installed (alongside whatever other Python versions you have), via winget.
