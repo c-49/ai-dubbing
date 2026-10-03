@@ -159,6 +159,22 @@ def synthesize(text: str, voice: str, target_language: str, emotion=None, refere
 
 CLONE_VOICE = "clone"     # a segment/speaker voice of "clone" means: clone the original speaker
 MAX_TAKES = 3             # cloned takes tried per line before keeping the best one
+NEUTRAL_EMOTIONS = {None, "", "neutral"}
+MIN_LEVEL_DB = -45.0       # a take quieter than this is a dead/silent generation (seen: -86 dB)
+NORMAL_LEVEL_DB = -21.5    # typical level of a cloned line (90th-percentile frame RMS)
+LEVEL_FOLLOW = 0.5         # a delivery-referenced line keeps this share of the original's loudness offset...
+LEVEL_FOLLOW_MAX_DB = 3.0  # ...capped, so soft lines stay audible and loud ones don't clip
+MAX_GAIN_DB = 12.0
+
+
+def level_db(audio: np.ndarray, sample_rate: int) -> float:
+    """Loud-part level of a clip: 90th-percentile of 25 ms frame RMS, in dB."""
+    frame = max(1, round(0.025 * sample_rate))
+    n = len(audio) // frame
+    if n == 0:
+        return -120.0
+    frames = audio[: n * frame].reshape(n, frame)
+    return float(np.percentile(20 * np.log10(np.sqrt((frames ** 2).mean(axis=1)) + 1e-8), 90))
 
 
 def clone_engine_name() -> str:
@@ -198,20 +214,40 @@ def synthesize_segment(seg: dict, text: str, target_language: str, duration=None
     words_per_second = config["languages"]["target"][target_language]["words_per_second"]
     engine = get_engine(target_language, clone_engine_name())
 
+    # Delivery: for an emotional line, clone from the line's OWN original audio
+    # (the model copies how it was said), not the speaker's usual neutral reference.
+    emotion = seg.get("emotion")
+    if (config.get("emotion", {}).get("use_line_reference", True) and emotion not in NEUTRAL_EMOTIONS
+            and seg.get("line_reference") and (ROOT_DIR / seg["line_reference"]).exists()):
+        reference = str(ROOT_DIR / seg["line_reference"])
+
+    own_audio_reference = reference != (str(ROOT_DIR / seg["reference"]))
     shortest, longest = duration_bounds(text, words_per_second)
     hint = min(duration, longest) if duration else longest   # slot, but never beyond a plausible length
     base_seed = seg.get("seed_base", seg["id"] * 100)
     best = None
-    for take in range(MAX_TAKES):
+    for take in range(MAX_TAKES + (1 if own_audio_reference else 0)):
+        if own_audio_reference and take == MAX_TAKES:
+            # The line's own audio keeps giving bad takes (e.g. a near-silent original):
+            # fall back to the speaker's usual reference for a last attempt.
+            reference, own_audio_reference = str(ROOT_DIR / seg["reference"]), False
+            print(f"  id={seg.get('id')}: delivery reference failed; using the speaker's usual reference", flush=True)
         seed = base_seed + take
         audio = engine.synthesize(text, seg["voice"], emotion=seg.get("emotion"), reference=reference,
                                   duration=hint, seed=seed)
         seconds = len(audio) / engine.sample_rate
-        ok = shortest <= seconds <= longest * 1.1
+        ok = shortest <= seconds <= longest * 1.1 and level_db(audio, engine.sample_rate) >= MIN_LEVEL_DB
         if best is None or ok:
-            best = (audio, seed)
+            best = (audio, seed, own_audio_reference)
         if ok:
             break
         print(f"  id={seg.get('id')}: take {take + 1} looks glitched ({seconds:.2f}s for {text!r}); retrying", flush=True)
     seg["seed"] = best[1]
-    return best[0], engine.sample_rate
+    audio = best[0]
+    if best[2]:
+        # Copying a quiet or shouted original also copies its absolute level. Keep the
+        # contrast but bring it near a normal level so every line stays audible.
+        offset = max(-LEVEL_FOLLOW_MAX_DB, min(LEVEL_FOLLOW_MAX_DB, LEVEL_FOLLOW * seg.get("loudness_offset_db", 0.0)))
+        gain = max(-MAX_GAIN_DB, min(MAX_GAIN_DB, NORMAL_LEVEL_DB + offset - level_db(audio, engine.sample_rate)))
+        audio = np.clip(audio * (10 ** (gain / 20)), -1.0, 1.0).astype(np.float32)
+    return audio, engine.sample_rate

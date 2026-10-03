@@ -33,6 +33,7 @@ import extract
 import separate
 import transcribe
 import diarize
+import emotion
 import translate
 import tts
 import timing
@@ -125,6 +126,7 @@ def run(episode_dir: Path) -> None:
         ("separate vocals (Demucs)", separate.separate, (episode_dir,)),
         ("transcribe (faster-whisper)", transcribe.transcribe, (episode_dir, glossary_terms, source_language)),
         ("diarize (pyannote)", diarize.diarize, (episode_dir,)),
+        ("delivery analysis", emotion.analyze, (episode_dir,)),
         ("translate (Ollama)", translate.translate, (episode_dir, glossary_path, source_language, target_language)),
         ("TTS", tts.synthesize, (episode_dir, voices_path, target_language)),
         ("timing fit", timing.fit_timing, (episode_dir, source_language, target_language)),

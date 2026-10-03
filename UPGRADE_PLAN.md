@@ -139,7 +139,7 @@ place that builds engines. Milestone numbers are kept for reference only.
   both English and Spanish, and the user judges it acceptable vs. the stock
   Kokoro voices.
 
-### M5: Emotional TTS
+### M5: Emotional TTS  (DONE in a reduced form: see "M5 outcome" below)
 - Add an `emotion` field to `segments.json` (editable per line in the review
   UI), filled by one or both of:
   - a local speech-emotion classifier run on each original line's separated
@@ -284,3 +284,28 @@ subprocess-worker interface.
   winget packages for ffmpeg, eSpeak and Ollama, so those install paths were
   exercised only as "already present"; the winget install fallbacks are
   untested), and a fresh Hugging Face token prompt (a token already existed).
+
+### M5 outcome
+- OmniVoice has no emotion labels (only `whisper`, pitch tags and non-verbal
+  tags). The usable carrier of delivery is **the line's own original audio as
+  the cloning reference**, which is what the plan called most dubbing-appropriate.
+- Built: `src/emotion.py` (stage 5 "delivery analysis": per-line loudness and
+  pitch relative to the speaker's own baseline -> neutral/intense/soft, plus a
+  cut of each line's audio), routing in `tts_engine.synthesize_segment`
+  (non-neutral + cloned voice -> own-audio reference), a Delivery column in the
+  review UI (editable, re-synthesizes, never overwritten by the analysis), and
+  `whisper` -> OmniVoice's whisper style.
+- Not built: an LLM/context-based label and a trained speech-emotion model (a
+  heuristic is language-independent and cheap, but arousal-only); no engine
+  that takes a separate emotion reference (IndexTTS can; it does not fit 6GB).
+- Measured on the 25-line test clip (7 lines took the own-audio path): pitch
+  tracking vs. the original per line improved from r=0.08 to r=0.33. A first
+  version also raised loudness correlation to 0.47 but did so partly by
+  copying a near-silent original, producing a -86 dB (silent) take; fixed with
+  a silence check, a fallback to the speaker's usual reference, and level
+  normalization that keeps only up to 3 dB of the original's loudness offset
+  (loudness contrast is now small by design, so the gain is mostly in pitch/prosody).
+- Whether it *sounds* more emotional is a listening judgement left to the user:
+  compare `work/vincenzo-clone/emo_off/dubbed.mp4` (all neutral) with
+  `work/vincenzo-clone/emo_on/dubbed.mp4`; only ids 0, 3, 8, 13, 14, 15, 16 differ.
+- Cost: delivery-referenced lines take the same ~10s each; no extra memory.

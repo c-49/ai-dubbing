@@ -99,6 +99,11 @@ models:
         worker:
           python: .venv/Scripts/python.exe
 
+emotion:
+  # For lines whose delivery isn't neutral, clone from that line's own original audio
+  # (see src/emotion.py) instead of the speaker's usual reference. Needs a cloned voice.
+  use_line_reference: true
+
 translation:
   chunk_size: 25          # segments per translation request
   context_lines: 3        # lines of surrounding context included

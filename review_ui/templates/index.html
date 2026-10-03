@@ -110,7 +110,7 @@
   <table>
     <thead>
       <tr>
-        <th>ID</th><th>Time</th><th id="sourceHeader">Source</th><th id="targetHeader">Target</th><th>Speaker / Voice</th><th>Play</th><th>Flag</th><th>Ignore</th>
+        <th>ID</th><th>Time</th><th id="sourceHeader">Source</th><th id="targetHeader">Target</th><th>Speaker / Voice</th><th title="How the original line was delivered. Non-neutral lines are cloned from that line's own audio (cloned voices only).">Delivery</th><th>Play</th><th>Flag</th><th>Ignore</th>
       </tr>
     </thead>
     <tbody id="segmentRows"></tbody>
@@ -272,6 +272,13 @@ function voiceOptionsHtml(selected) {
   return html;
 }
 
+const EMOTIONS = ['neutral', 'intense', 'soft', 'angry', 'sad', 'crying', 'whisper', 'happy'];
+function emotionOptionsHtml(selected) {
+  const current = selected || 'neutral';
+  const list = EMOTIONS.includes(current) ? EMOTIONS : EMOTIONS.concat([current]);
+  return list.map(e => `<option value="${e}" ${e === current ? 'selected' : ''}>${e}</option>`).join('');
+}
+
 function playClip(relPath) {
   const player = document.getElementById('player');
   player.src = `/audio/${SHOW}/${EPISODE}/${relPath}`;
@@ -382,6 +389,7 @@ function renderSegments() {
         ${seg.speaker ?? '?'}<br>
         <select class="row-voice" data-id="${seg.id}">${voiceOptionsHtml(seg.voice)}</select>
       </td>
+      <td><select class="row-emotion" data-id="${seg.id}" title="score ${seg.emotion_score ?? '-'}">${emotionOptionsHtml(seg.emotion)}</select></td>
       <td>${seg.audio_path ? `<button class="play-btn" onclick="playClip('${seg.audio_path}')">Play</button>
         <button class="play-btn redo-btn" data-id="${seg.id}" title="Generate this line again (a cloned voice varies each time)">Redo</button>` : ''}</td>
       <td><input type="checkbox" class="flag-check" data-id="${seg.id}" ${seg.needs_review ? 'checked' : ''}></td>
@@ -428,6 +436,12 @@ function renderSegments() {
       textarea.disabled = false;
       savedLabel.style.display = 'inline';
       setTimeout(() => savedLabel.style.display = 'none', 1500);
+    });
+
+    tr.querySelector('.row-emotion').addEventListener('change', async (e) => {
+      e.target.disabled = true;
+      await saveSegment(seg.id, { emotion: e.target.value });
+      e.target.disabled = false;
     });
 
     tr.querySelector('.row-voice').addEventListener('change', async (e) => {

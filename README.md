@@ -221,6 +221,21 @@ output), so characters sound consistent and Spanish is no longer limited to
   `models.tts.engines.omnivoice.settings`.
 - Cloned and stock speakers can be mixed in one episode.
 
+### Delivery (emotion) in cloned dubs
+
+A pipeline stage ("delivery analysis", `src/emotion.py`) measures each original
+line's loudness and pitch against that speaker's own usual level and labels it
+`neutral`, `intense` or `soft` (it measures arousal only, so it can't tell anger
+from joy; lines under 1s are left neutral). The **Delivery** column in the
+review page shows and edits the label (also: angry, sad, crying, whisper,
+happy). For a cloned speaker, a non-neutral line is cloned from *that line's
+own original audio* instead of the speaker's usual reference, so the dub
+inherits how the actor said it. `whisper` also switches on OmniVoice's
+whisper style. Levels are kept near normal so soft lines stay audible. Your
+manual labels are never overwritten. Turn this off with
+`emotion.use_line_reference: false` in `config.yaml`. Stock Kokoro voices
+have no emotion control and ignore the label.
+
 Setting up the engine on a new machine: `uv venv .venv-engines/omnivoice
 --python 3.11`, install torch 2.8.0 (CUDA build from
 https://download.pytorch.org/whl/cu126), then `omnivoice soundfile pyyaml

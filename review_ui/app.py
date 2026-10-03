@@ -485,6 +485,10 @@ def update_segment(show, episode, seg_id):
         regenerate = True
     if "needs_review" in data:
         seg["needs_review"] = bool(data["needs_review"])
+    if "emotion" in data and (data["emotion"] or "neutral") != (seg.get("emotion") or "neutral"):
+        seg["emotion"] = data["emotion"] or "neutral"
+        seg["emotion_edited"] = True   # a human choice; the analysis stage never overwrites it
+        regenerate = True
 
     lang_info = get_show_language_info(show)
     target_language = lang_info["target_language"]

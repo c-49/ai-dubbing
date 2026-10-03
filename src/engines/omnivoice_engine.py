@@ -41,6 +41,8 @@ class OmniVoiceEngine:
             kwargs["guidance_scale"] = self._guidance
         if self._instruct:
             kwargs["instruct"] = self._instruct
+        if emotion == "whisper":
+            kwargs["instruct"] = "whisper"   # the model's one explicit style tag
         if seed is not None:
             import torch
             torch.manual_seed(seed)
