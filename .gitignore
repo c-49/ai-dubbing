@@ -5,3 +5,10 @@ __pycache__/
 .ipynb_checkpoints/
 shows/*/incoming/*
 !shows/*/incoming/.gitkeep
+bin/
+models/
+.venv/
+.venv-cuda/
+.venv-engines/
+third_party/
+.dubber-env.json

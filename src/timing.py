@@ -20,11 +20,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-import numpy as np
 import soundfile as sf
 import yaml
-from kokoro import KPipeline
+import tts_engine
 
+import hardware
 import pathfix  # noqa: F401
 from translate import call_ollama
 
@@ -66,9 +66,17 @@ def ask_shorter_translation(
         return None
 
 
+def slot_seconds(segments: list[dict], i: int) -> float | None:
+    """Seconds available to segment i before the next line starts, or None if
+    it is last or the original speech overlapped the next line too."""
+    if i + 1 >= len(segments) or segments[i + 1]["start"] < segments[i]["end"]:
+        return None
+    return segments[i + 1]["start"] - segments[i]["start"]
+
+
 def fit_segment(
     episode_dir: Path, segments: list[dict], i: int, max_speedup: float,
-    ollama_model: str, ollama_host: str, tts_pipeline: KPipeline,
+    ollama_model: str, ollama_host: str, target_language: str,
     source_name: str = "Korean", target_name: str = "English", words_per_second: float = 2.3,
     allow_auto_shorten: bool = True,
 ) -> None:
@@ -106,14 +114,20 @@ def fit_segment(
             print(f"  id={seg['id']}: sped up {needed_factor:.2f}x to fit {available:.2f}s slot")
             return
 
+        cloned = seg.get("voice") == tts_engine.CLONE_VOICE
+        if cloned:
+            # Ollama (~4GB) and a cloning model together overflow a 6GB card,
+            # which silently spills to system RAM and runs several times slower.
+            tts_engine.release_engines()
         shorter = ask_shorter_translation(
             seg["source_text"], seg["target_text"], max(1, round(available * words_per_second)),
             source_name, target_name, ollama_model, ollama_host,
         ) if allow_auto_shorten else None
+        if cloned:
+            hardware.unload_ollama(ollama_model, ollama_host)
         if shorter:
-            chunks = [audio for _, _, audio in tts_pipeline(shorter, voice=seg["voice"])]
-            audio = np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
-            sf.write(clip_path, audio, 24000)
+            audio, sample_rate = tts_engine.synthesize_segment(seg, shorter, target_language, duration=available)
+            sf.write(clip_path, audio, sample_rate)
             seg["target_text"] = shorter
             # A compressed re-translation isn't always natural English (caught
             # one that read as broken, e.g. "Thirds out, dangerous.") -- flag
@@ -149,7 +163,6 @@ def fit_timing(episode_dir: Path, source_language: str = "ko", target_language: 
     target_name = target_cfg["name"]
     words_per_second = target_cfg["words_per_second"]
 
-    tts_pipeline = KPipeline(lang_code=target_cfg["kokoro_lang_code"])
 
     todo = [i for i, s in enumerate(segments) if not s.get("timing_fit")]
     if len(todo) < len(segments):
@@ -157,13 +170,14 @@ def fit_timing(episode_dir: Path, source_language: str = "ko", target_language: 
 
     for n, i in enumerate(todo):
         fit_segment(
-            episode_dir, segments, i, max_speedup, ollama_cfg["model"], ollama_cfg["host"], tts_pipeline,
+            episode_dir, segments, i, max_speedup, ollama_cfg["model"], ollama_cfg["host"], target_language,
             source_name, target_name, words_per_second,
         )
         if (n + 1) % 20 == 0 or n + 1 == len(todo):
             print(f"  timing fit: {n + 1}/{len(todo)}")
         segments_path.write_text(json.dumps(segments, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    hardware.unload_ollama(ollama_cfg["model"], ollama_cfg["host"])
     return segments
 
 

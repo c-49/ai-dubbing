@@ -9,7 +9,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+import yaml
+
+import hardware
 import pathfix  # noqa: F401
+
+CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
 
 
 def separate(episode_dir: Path) -> tuple[Path, Path]:
@@ -22,11 +27,16 @@ def separate(episode_dir: Path) -> tuple[Path, Path]:
     if vocals_out.exists() and no_vocals_out.exists():
         return vocals_out, no_vocals_out
 
+    demucs_cfg = yaml.safe_load(CONFIG_PATH.read_text())["models"]["demucs"]
+    device = hardware.resolve_device(demucs_cfg.get("device", "auto"))
+    print(f"  demucs: {device}")
+
+    # Demucs runs as a subprocess, so its VRAM is freed when it exits.
     subprocess.run(
         [
             sys.executable, "-m", "demucs",
             "--two-stems", "vocals",
-            "--device", "cpu",
+            "--device", device,
             "-o", str(episode_dir / "_demucs_out"),
             str(audio_in),
         ],

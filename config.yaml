@@ -46,8 +46,8 @@ languages:
 models:
   whisper:
     size: large-v3       # used from Milestone 1 onward; downloads ~3GB on first real use
-    device: cpu
-    compute_type: int8
+    device: auto         # auto = CUDA if available else CPU; or force cpu / cuda
+    compute_type: auto   # auto = float16 on GPU, int8 on CPU
     vad:
       threshold: 0.4            # lower than faster-whisper's 0.5 default, to catch quieter/mumbled lines
       min_silence_duration_ms: 500   # default 2000; shorter so nearby lines don't get merged into one blob
@@ -55,15 +55,54 @@ models:
       speech_pad_ms: 200
   demucs:
     model: htdemucs
-    device: cpu
+    device: auto
   pyannote:
     pipeline: pyannote/speaker-diarization-3.1
-    device: cpu
+    device: auto
   ollama:
     model: qwen2.5:7b     # better Korean handling than llama3; pulled during Milestone 0
     host: http://localhost:11434
   tts:
+    clone_engine: omnivoice   # engine for speakers set to the "clone" voice (see src/tts_engine.py)
     engine: kokoro    # default_voice is now per-target-language, under languages.target.<code>
+    # Registry for src/tts_engine.py. Add `worker: {python: <venv python>}` to
+    # run an engine in its own venv as a subprocess (frees VRAM when it exits).
+    engines:
+      kokoro:
+        class: "engines.kokoro_engine:KokoroEngine"
+        settings:
+          device: auto
+      stub:             # test engine: sine tones, for exercising the abstraction
+        class: "engines.stub_engine:StubEngine"
+      chatterbox:       # voice cloning candidate (M4 bake-off); own venv
+        class: "engines.chatterbox_engine:ChatterboxEngine"
+        worker:
+          python: .venv-engines/chatterbox/Scripts/python.exe
+        settings:
+          exaggeration: 0.5
+          cfg_weight: 0.0     # 0 reduces accent bleed from a foreign-language reference
+      omnivoice:        # voice cloning candidate (M4 bake-off); own venv
+        class: "engines.omnivoice_engine:OmniVoiceEngine"
+        worker:
+          python: .venv-engines/omnivoice/Scripts/python.exe
+        settings:
+          # Listening test (en + es): guidance 1.0 sounded least accented while still
+          # like the original speaker; the default 2.0 pulls harder toward the reference's
+          # (Korean) accent. Other knobs: speed, num_step, instruct (English accent tags).
+          guidance_scale: 1.0
+      indextts:         # voice cloning candidate (M4 bake-off); env in third_party/index-tts
+        class: "engines.indextts_engine:IndexTTSEngine"
+        worker:
+          python: third_party/index-tts/.venv/Scripts/python.exe
+      stub_worker:      # same stub, run as a subprocess worker (tests that path)
+        class: "engines.stub_engine:StubEngine"
+        worker:
+          python: .venv/Scripts/python.exe
+
+emotion:
+  # For lines whose delivery isn't neutral, clone from that line's own original audio
+  # (see src/emotion.py) instead of the speaker's usual reference. Needs a cloned voice.
+  use_line_reference: true
 
 translation:
   chunk_size: 25          # segments per translation request
